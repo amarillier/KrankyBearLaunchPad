@@ -1,0 +1,49 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.syso
+
+*.res
+BusinessApp.res
+
+test/*
+TaniumContent/*
+winres/*
+git.sh
+git.txt
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+## Build artifacts
+netinfo
+dist/
+build/
+Inno/*
+# ALLOWED
+!bin/*
+!Resources/*
+!Inno/BusinessApp.iss
+!Inno/MiniBot.ico
+!Inno/license.txt
+
+
+# Update checker data
+latestcheck.json
