@@ -1,9 +1,11 @@
 Release notes
 
 0.1.NEXT
-- Window position saving/restoration (currently limited by Fyne framework)
+- App icon auto-detection improvements for when icons are not able to be properly detected or extracted
 - Additional package manager support
-- App icon auto-detection improvements
+
+- Auto retrieve application icons from internet when not detected?
+- Window position saving/restoration (currently limited by Fyne framework)
 - Keyboard shortcuts for common operations
 - Drag and drop app organization
 - Export/import configuration
@@ -11,6 +13,11 @@ Release notes
 - Recent apps tracking
 - Favorites/starred apps
 -
+
+0.1.1
+- Performance improvement, when first run the app will display a dialog indicating application discovery. Subsequent runs, rather than do full application discovery every time before the application is usable, we use the existing list of discovered applications, the user can
+ begin working immediately, and we run a background discovery to add or remove applications as needed.
+- Minor improvements and fixes
 
 0.1.0 
 - initial checkin

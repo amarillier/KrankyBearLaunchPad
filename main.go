@@ -32,7 +32,7 @@ import (
 
 const (
 	// appName    = "KrankyBear LaunchPad"
-	appVersion = "0.1.0" // see FyneApp.toml
+	appVersion = "0.1.1" // see FyneApp.toml
 	appAuthor  = "Allan Marillier"
 )
 
@@ -80,53 +80,64 @@ func main() {
 		}
 	}
 
-	// Show loading window while discovering applications
-	loadingWindow := myApp.NewWindow("KrankyBear LaunchPad")
 	_, month, _ := time.Now().Date()
-	if month == time.December {
-		loadingWindow.SetIcon(resourceKrankyBearChristmasGrinchPng)
+
+	// Check if we have existing apps - if so, show UI immediately and discover in background
+	hasExistingApps := len(config.Apps) > 0
+	var loadingWindow fyne.Window
+
+	if !hasExistingApps {
+		// No existing apps - show loading window while discovering
+		loadingWindow = myApp.NewWindow("KrankyBear LaunchPad")
+		if month == time.December {
+			loadingWindow.SetIcon(resourceKrankyBearChristmasGrinchPng)
+		} else {
+			loadingWindow.SetIcon(resourceKrankyBearTrapperRedPlaidPng)
+		}
+		loadingWindow.Resize(fyne.NewSize(400, 200))
+		loadingWindow.CenterOnScreen()
+		loadingWindow.SetFixedSize(true)
+
+		// Create loading content
+		loadingIcon := canvas.NewImageFromResource(resourceKrankyBearTrapperRedPlaidPng)
+		if month == time.December {
+			loadingIcon = canvas.NewImageFromResource(resourceKrankyBearChristmasGrinchPng)
+		}
+		loadingIcon.FillMode = canvas.ImageFillContain
+		loadingIcon.SetMinSize(fyne.NewSize(64, 64))
+
+		loadingLabel := widget.NewLabel("Discovering applications... this could take a few seconds\nPlease wait.")
+		loadingLabel.Alignment = fyne.TextAlignCenter
+		loadingLabel.Wrapping = fyne.TextWrapWord
+
+		loadingContent := container.NewVBox(
+			container.NewCenter(loadingIcon),
+			loadingLabel,
+		)
+		loadingWindow.SetContent(container.NewPadded(loadingContent))
+		loadingWindow.Show()
+		loadingWindow.Canvas().Refresh(loadingContent) // Ensure window is rendered
+
+		// Discover installed applications synchronously (first time)
+		discoveredApps, err = DiscoverApps()
+		if err != nil {
+			fmt.Printf("Error discovering apps: %v\n", err)
+			discoveredApps = []App{}
+		}
+
+		// Close loading window
+		loadingWindow.Close()
+
+		// Merge discovered apps with saved apps (avoid duplicates)
+		mergeDiscoveredApps()
+
+		// Auto-add all discovered apps to Home tab if not already in any tab
+		autoAddAppsToHomeTab()
 	} else {
-		loadingWindow.SetIcon(resourceKrankyBearTrapperRedPlaidPng)
+		// We have existing apps - show UI immediately and discover in background
+		// Start background discovery (will update UI when complete)
+		go discoverAppsInBackground()
 	}
-	loadingWindow.Resize(fyne.NewSize(400, 200))
-	loadingWindow.CenterOnScreen()
-	loadingWindow.SetFixedSize(true)
-
-	// Create loading content
-	loadingIcon := canvas.NewImageFromResource(resourceKrankyBearTrapperRedPlaidPng)
-	if month == time.December {
-		loadingIcon = canvas.NewImageFromResource(resourceKrankyBearChristmasGrinchPng)
-	}
-	loadingIcon.FillMode = canvas.ImageFillContain
-	loadingIcon.SetMinSize(fyne.NewSize(64, 64))
-
-	loadingLabel := widget.NewLabel("Discovering applications... this could take a few seconds\nPlease wait.")
-	loadingLabel.Alignment = fyne.TextAlignCenter
-	loadingLabel.Wrapping = fyne.TextWrapWord
-
-	loadingContent := container.NewVBox(
-		container.NewCenter(loadingIcon),
-		loadingLabel,
-	)
-	loadingWindow.SetContent(container.NewPadded(loadingContent))
-	loadingWindow.Show()
-	loadingWindow.Canvas().Refresh(loadingContent) // Ensure window is rendered
-
-	// Discover installed applications
-	discoveredApps, err = DiscoverApps()
-	if err != nil {
-		fmt.Printf("Error discovering apps: %v\n", err)
-		discoveredApps = []App{}
-	}
-
-	// Close loading window
-	loadingWindow.Close()
-
-	// Merge discovered apps with saved apps (avoid duplicates)
-	mergeDiscoveredApps()
-
-	// Auto-add all discovered apps to Home tab if not already in any tab
-	autoAddAppsToHomeTab()
 
 	mainWindow = myApp.NewWindow("KrankyBear LaunchPad")
 
@@ -169,10 +180,8 @@ func main() {
 		}
 
 		closeAllChildWindows()
-		// Clean up system tray if it exists
-		if desk, ok := myApp.(desktop.App); ok {
-			desk.SetSystemTrayMenu(nil)
-		}
+		// Note: System tray cleanup is handled by the Quit menu item.
+		// We don't clean it up here to avoid crashes during window close.
 		mainWindow.Close()
 		myApp.Quit()
 	})
@@ -404,11 +413,51 @@ type GitHubRelease struct {
 	URL     string `json:"html_url"`
 }
 
+// compareVersions compares two version strings (e.g., "0.1.0", "0.1.1")
+// Returns: -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+func compareVersions(v1, v2 string) int {
+	// Remove 'v' prefix if present
+	v1 = strings.TrimPrefix(v1, "v")
+	v2 = strings.TrimPrefix(v2, "v")
+
+	// Split versions into parts
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+
+	// Get maximum length
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+
+	// Compare each part
+	for i := 0; i < maxLen; i++ {
+		var part1, part2 int
+		if i < len(parts1) {
+			part1, _ = strconv.Atoi(parts1[i])
+		}
+		if i < len(parts2) {
+			part2, _ = strconv.Atoi(parts2[i])
+		}
+
+		if part1 < part2 {
+			return -1
+		}
+		if part1 > part2 {
+			return 1
+		}
+	}
+
+	return 0
+}
+
 // checkForUpdate checks for updates from GitHub releases
 func checkForUpdate() {
-	// Check if update window is already open
-	if updateWindow != nil {
-		updateWindow.RequestFocus()
+	// Check if update window is already open using dialog tracking system
+	updateWindowTitle := appName + ": Update Check"
+	if existingWindow := showOrFocusDialog(updateWindowTitle); existingWindow != nil {
+		// Update updateWindow reference in case it was cleaned up
+		updateWindow = existingWindow
 		return
 	}
 
@@ -427,29 +476,37 @@ func checkForUpdate() {
 
 		resp, err := client.Get(apiURL)
 		if err != nil {
-			checkingDialog.Hide()
-			dialog.ShowError(fmt.Errorf("Failed to check for updates: %v", err), mainWindow)
+			fyne.Do(func() {
+				checkingDialog.Hide()
+				dialog.ShowError(fmt.Errorf("Failed to check for updates: %v", err), mainWindow)
+			})
 			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			checkingDialog.Hide()
-			dialog.ShowError(fmt.Errorf("Failed to check for updates: HTTP %d", resp.StatusCode), mainWindow)
+			fyne.Do(func() {
+				checkingDialog.Hide()
+				dialog.ShowError(fmt.Errorf("Failed to check for updates: HTTP %d", resp.StatusCode), mainWindow)
+			})
 			return
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			checkingDialog.Hide()
-			dialog.ShowError(fmt.Errorf("Failed to read update information: %v", err), mainWindow)
+			fyne.Do(func() {
+				checkingDialog.Hide()
+				dialog.ShowError(fmt.Errorf("Failed to read update information: %v", err), mainWindow)
+			})
 			return
 		}
 
 		var release GitHubRelease
 		if err := json.Unmarshal(body, &release); err != nil {
-			checkingDialog.Hide()
-			dialog.ShowError(fmt.Errorf("Failed to parse update information: %v", err), mainWindow)
+			fyne.Do(func() {
+				checkingDialog.Hide()
+				dialog.ShowError(fmt.Errorf("Failed to parse update information: %v", err), mainWindow)
+			})
 			return
 		}
 
@@ -457,21 +514,34 @@ func checkForUpdate() {
 		latestVersion := strings.TrimPrefix(release.TagName, "v")
 		currentVersion := strings.TrimPrefix(appVersion, "v")
 
+		// Compare versions to determine which is newer
+		comparison := compareVersions(currentVersion, latestVersion)
+
 		// Format message similar to KrankyBearClock
 		var message string
-		if latestVersion != currentVersion {
+		var updateAvailable bool
+
+		if comparison > 0 {
+			// Current version is newer than released version
+			message = fmt.Sprintf("You are running a newer version of %s.\n\nCurrent version: %s\nLatest released version: %s",
+				appName, currentVersion, latestVersion)
+			updateAvailable = false
+		} else if comparison < 0 {
+			// Current version is older than released version
 			message = fmt.Sprintf("A newer version is available!\n\nCurrent version: %s\nLatest version: %s\n\n%s",
 				currentVersion, latestVersion, release.Body)
+			updateAvailable = true
 		} else {
+			// Versions are the same
 			message = fmt.Sprintf("You are running the latest version.\n\nCurrent version: %s\nLatest version: %s",
 				currentVersion, latestVersion)
+			updateAvailable = false
 		}
 
 		// Hide checking dialog and show update alert window on main thread
-		checkingDialog.Hide()
-		// Use fyne.Do to ensure UI operations happen on main thread
 		fyne.Do(func() {
-			showUpdateAlert(message, release.URL, latestVersion != currentVersion)
+			checkingDialog.Hide()
+			showUpdateAlert(message, release.URL, updateAvailable)
 		})
 	}()
 }
@@ -494,10 +564,12 @@ func showUpdateAlert(updtmsg string, releaseURL string, updateAvailable bool) {
 	myreleasenoteslink := widget.NewHyperlink("https://github.com/amarillier/KrankyBearLaunchPad/blob/allanm/ReleaseNotes.txt", releasenoteslink)
 	myreleasenoteslink.Alignment = fyne.TextAlignLeading
 
-	// Create image - use Christmas Grinch in December, otherwise Trapper Red Plaid
+	// Create image - use HardHat if running newer version, Christmas Grinch in December, otherwise Trapper Red Plaid
 	var kbimg *canvas.Image
 	_, month, _ := time.Now().Date()
-	if month == time.December {
+	if strings.Contains(updtmsg, "running a newer version") {
+		kbimg = canvas.NewImageFromResource(resourceKrankyBearHardHatPng)
+	} else if month == time.December {
 		kbimg = canvas.NewImageFromResource(resourceKrankyBearChristmasGrinchPng)
 	} else {
 		kbimg = canvas.NewImageFromResource(resourceKrankyBearTrapperRedPlaidPng)
@@ -528,23 +600,50 @@ func showUpdateAlert(updtmsg string, releaseURL string, updateAvailable bool) {
 	)
 
 	// Create or update window
+	updateWindowTitle := appName + ": Update Check"
 	if updateWindow == nil {
-		updateWindow = myApp.NewWindow(appName + ": Update Check")
-		// Set icon based on month - Christmas Grinch in December, otherwise Trapper Red Plaid
-		if month == time.December {
+		updateWindow = myApp.NewWindow(updateWindowTitle)
+		// Set icon - use HardHat if running newer version, Christmas Grinch in December, otherwise Trapper Red Plaid
+		if strings.Contains(updtmsg, "running a newer version") {
+			updateWindow.SetIcon(resourceKrankyBearHardHatPng)
+		} else if month == time.December {
 			updateWindow.SetIcon(resourceKrankyBearChristmasGrinchPng)
 		} else {
 			updateWindow.SetIcon(resourceKrankyBearTrapperRedPlaidPng)
 		}
 		updateWindow.Resize(fyne.NewSize(500, 300))
+
+		// Register dialog for tracking
+		registerDialog(updateWindow)
+
+		// Override close intercept to ensure proper cleanup
+		// This needs to be after registerDialog because it sets up its own intercept
 		updateWindow.SetCloseIntercept(func() {
-			updateWindow.Close()
+			// Store reference and title before cleanup
+			windowToClose := updateWindow
+			title := windowToClose.Title()
+
+			// Remove from tracking list
+			for i, w := range childWindows {
+				if w == windowToClose {
+					childWindows = append(childWindows[:i], childWindows[i+1:]...)
+					break
+				}
+			}
+			// Remove from open dialogs map
+			if _, exists := openDialogs[title]; exists {
+				delete(openDialogs, title)
+			}
+			// Clear updateWindow variable
 			updateWindow = nil
+			// Close the window
+			windowToClose.Close()
 		})
-		registerChildWindow(updateWindow)
 	} else {
 		// Update icon if window already exists
-		if month == time.December {
+		if strings.Contains(updtmsg, "running a newer version") {
+			updateWindow.SetIcon(resourceKrankyBearHardHatPng)
+		} else if month == time.December {
 			updateWindow.SetIcon(resourceKrankyBearChristmasGrinchPng)
 		} else {
 			updateWindow.SetIcon(resourceKrankyBearTrapperRedPlaidPng)
@@ -751,12 +850,13 @@ func (a *AppCardWidget) loadAppIcon() *canvas.Image {
 
 	// Try to load icon from saved path first
 	if a.app.Icon != "" && fileExists(a.app.Icon) {
-		// Skip .icns files - Fyne can't load them directly
-		if !strings.HasSuffix(strings.ToLower(a.app.Icon), ".icns") {
+		// Only try formats that Fyne supports
+		if isFyneSupportedImageFormat(a.app.Icon) {
 			resource, err := fyne.LoadResourceFromPath(a.app.Icon)
 			if err == nil {
 				iconResource = resource
 			}
+			// Silently skip if load fails - file might be corrupted or invalid
 		}
 	}
 
@@ -767,8 +867,8 @@ func (a *AppCardWidget) loadAppIcon() *canvas.Image {
 		if iconResource != nil && a.app.Icon == "" {
 			// Find the icon path that was detected
 			if detectedIconPath := findIconPathFromExecutable(a.app.Executable); detectedIconPath != "" {
-				// Only save if it's a format Fyne can load (skip .icns)
-				if !strings.HasSuffix(strings.ToLower(detectedIconPath), ".icns") {
+				// Only save if it's a format Fyne can load
+				if isFyneSupportedImageFormat(detectedIconPath) {
 					// Update app icon in config and refresh widget
 					for i := range config.Apps {
 						if config.Apps[i].ID == a.app.ID {
@@ -790,9 +890,19 @@ func (a *AppCardWidget) loadAppIcon() *canvas.Image {
 		}
 	}
 
-	// Fallback to default icon
+	// Fallback to generic application icon if we couldn't load one
+	// Users can customize this icon using the "Change Icon" option in the context menu
 	if iconResource == nil {
-		iconResource = theme.FolderIcon()
+		// Use DocumentIcon as a generic application placeholder (more appropriate than FolderIcon)
+		iconResource = theme.DocumentIcon()
+		if iconResource == nil {
+			// Fallback to FileIcon if DocumentIcon not available
+			iconResource = theme.FileIcon()
+			if iconResource == nil {
+				// Final fallback to FolderIcon
+				iconResource = theme.FolderIcon()
+			}
+		}
 	}
 
 	// Create image and resize to 64x64
@@ -805,7 +915,7 @@ func (a *AppCardWidget) loadAppIcon() *canvas.Image {
 }
 
 // findIconPathFromExecutable finds the icon file path (not resource) for saving to config
-// Prioritizes formats that Fyne can load (PNG, JPG, etc.) over .icns
+// Only returns paths for formats that Fyne can load (PNG, JPG, BMP)
 func findIconPathFromExecutable(executable string) string {
 	// For macOS .app bundles, look for icon in Resources
 	if strings.HasSuffix(executable, ".app") || strings.Contains(executable, ".app/Contents") {
@@ -819,23 +929,11 @@ func findIconPathFromExecutable(executable string) string {
 
 		resourcesDir := filepath.Join(appPath, "Contents", "Resources")
 		if entries, err := os.ReadDir(resourcesDir); err == nil {
-			// First pass: prioritize PNG and other standard formats
+			// Only return formats that Fyne supports
 			for _, entry := range entries {
-				name := strings.ToLower(entry.Name())
-				if strings.HasSuffix(name, ".png") ||
-					strings.HasSuffix(name, ".jpg") ||
-					strings.HasSuffix(name, ".jpeg") ||
-					strings.HasSuffix(name, ".bmp") ||
-					strings.HasSuffix(name, ".ico") {
-					return filepath.Join(resourcesDir, entry.Name())
-				}
-			}
-			// Second pass: fall back to .icns if nothing else found
-			// Note: .icns files may not work with Fyne, but we'll save the path anyway
-			for _, entry := range entries {
-				name := strings.ToLower(entry.Name())
-				if strings.HasSuffix(name, ".icns") {
-					return filepath.Join(resourcesDir, entry.Name())
+				name := entry.Name()
+				if isFyneSupportedImageFormat(name) {
+					return filepath.Join(resourcesDir, name)
 				}
 			}
 		}
@@ -847,14 +945,11 @@ func findIconPathFromExecutable(executable string) string {
 		if entries, err := os.ReadDir(dir); err == nil {
 			exeName := strings.TrimSuffix(filepath.Base(executable), ".exe")
 			for _, entry := range entries {
-				name := strings.ToLower(entry.Name())
-				if (strings.HasSuffix(name, ".ico") ||
-					strings.HasSuffix(name, ".png") ||
-					strings.HasSuffix(name, ".jpg") ||
-					strings.HasSuffix(name, ".jpeg") ||
-					strings.HasSuffix(name, ".bmp")) &&
-					strings.Contains(name, strings.ToLower(exeName)) {
-					return filepath.Join(dir, entry.Name())
+				name := entry.Name()
+				// Only return formats that Fyne supports
+				if isFyneSupportedImageFormat(name) &&
+					strings.Contains(strings.ToLower(name), strings.ToLower(exeName)) {
+					return filepath.Join(dir, name)
 				}
 			}
 		}
@@ -865,17 +960,14 @@ func findIconPathFromExecutable(executable string) string {
 	if entries, err := os.ReadDir(dir); err == nil {
 		exeName := filepath.Base(executable)
 		for _, entry := range entries {
-			name := strings.ToLower(entry.Name())
-			if strings.HasSuffix(name, ".png") ||
-				strings.HasSuffix(name, ".jpg") ||
-				strings.HasSuffix(name, ".jpeg") ||
-				strings.HasSuffix(name, ".bmp") ||
-				strings.HasSuffix(name, ".ico") ||
-				strings.HasSuffix(name, ".svg") {
+			name := entry.Name()
+			// Only return formats that Fyne supports
+			if isFyneSupportedImageFormat(name) {
+				// Try to match by name
 				baseName := strings.TrimSuffix(strings.ToLower(exeName), filepath.Ext(exeName))
-				iconBaseName := strings.TrimSuffix(strings.ToLower(entry.Name()), filepath.Ext(entry.Name()))
+				iconBaseName := strings.TrimSuffix(strings.ToLower(name), filepath.Ext(name))
 				if strings.Contains(iconBaseName, baseName) || strings.Contains(baseName, iconBaseName) {
-					return filepath.Join(dir, entry.Name())
+					return filepath.Join(dir, name)
 				}
 			}
 		}
@@ -890,9 +982,13 @@ func (a *AppCardWidget) loadIconResource() fyne.Resource {
 
 	// Try to load icon from various sources
 	if a.app.Icon != "" && fileExists(a.app.Icon) {
-		resource, err := fyne.LoadResourceFromPath(a.app.Icon)
-		if err == nil {
-			iconResource = resource
+		// Only try formats that Fyne supports
+		if isFyneSupportedImageFormat(a.app.Icon) {
+			resource, err := fyne.LoadResourceFromPath(a.app.Icon)
+			if err == nil {
+				iconResource = resource
+			}
+			// Silently skip if load fails
 		}
 	}
 
@@ -901,12 +997,39 @@ func (a *AppCardWidget) loadIconResource() fyne.Resource {
 		iconResource = detectIconFromExecutable(a.app.Executable)
 	}
 
-	// Fallback to default icon
+	// Fallback to generic application icon if we couldn't load one
+	// Users can customize this icon using the "Change Icon" option in the context menu
 	if iconResource == nil {
-		iconResource = theme.FolderIcon()
+		iconResource = getGenericAppIcon()
 	}
 
 	return iconResource
+}
+
+// getGenericAppIcon returns a generic application icon as a fallback
+// Users can customize icons using the "Change Icon" option in the context menu
+func getGenericAppIcon() fyne.Resource {
+	// Try DocumentIcon first (most appropriate for applications)
+	if icon := theme.DocumentIcon(); icon != nil {
+		return icon
+	}
+	// Fallback to FileIcon
+	if icon := theme.FileIcon(); icon != nil {
+		return icon
+	}
+	// Final fallback to FolderIcon
+	return theme.FolderIcon()
+}
+
+// isFyneSupportedImageFormat checks if a file format is supported by Fyne
+func isFyneSupportedImageFormat(filename string) bool {
+	name := strings.ToLower(filename)
+	// Fyne supports: PNG, JPG/JPEG, BMP
+	// Fyne does NOT support: ICO, ICNS, SVG (on most platforms)
+	return strings.HasSuffix(name, ".png") ||
+		strings.HasSuffix(name, ".jpg") ||
+		strings.HasSuffix(name, ".jpeg") ||
+		strings.HasSuffix(name, ".bmp")
 }
 
 // detectIconFromExecutable tries to find an icon based on the executable path
@@ -925,31 +1048,15 @@ func detectIconFromExecutable(executable string) fyne.Resource {
 
 		resourcesDir := filepath.Join(appPath, "Contents", "Resources")
 		if entries, err := os.ReadDir(resourcesDir); err == nil {
-			// First pass: try PNG and other standard formats (Fyne supports these)
+			// Only try formats that Fyne supports
 			for _, entry := range entries {
-				name := strings.ToLower(entry.Name())
-				// Prioritize PNG and other standard formats that Fyne can load
-				if strings.HasSuffix(name, ".png") ||
-					strings.HasSuffix(name, ".jpg") ||
-					strings.HasSuffix(name, ".jpeg") ||
-					strings.HasSuffix(name, ".bmp") ||
-					strings.HasSuffix(name, ".ico") {
-					iconPath := filepath.Join(resourcesDir, entry.Name())
+				name := entry.Name()
+				if isFyneSupportedImageFormat(name) {
+					iconPath := filepath.Join(resourcesDir, name)
 					if resource, err := fyne.LoadResourceFromPath(iconPath); err == nil {
 						return resource
 					}
-				}
-			}
-			// Second pass: try .icns files (Fyne may not support these, but try anyway)
-			// Note: .icns files often fail to load, so we try them last
-			for _, entry := range entries {
-				name := strings.ToLower(entry.Name())
-				if strings.HasSuffix(name, ".icns") {
-					iconPath := filepath.Join(resourcesDir, entry.Name())
-					if resource, err := fyne.LoadResourceFromPath(iconPath); err == nil {
-						return resource
-					}
-					// If .icns fails, don't save it to config - it won't work later either
+					// Silently skip if load fails - file might be corrupted or invalid
 				}
 			}
 		}
@@ -961,18 +1068,15 @@ func detectIconFromExecutable(executable string) fyne.Resource {
 		if entries, err := os.ReadDir(dir); err == nil {
 			exeName := strings.TrimSuffix(filepath.Base(executable), ".exe")
 			for _, entry := range entries {
-				name := strings.ToLower(entry.Name())
-				// Support multiple image formats
-				if (strings.HasSuffix(name, ".ico") ||
-					strings.HasSuffix(name, ".png") ||
-					strings.HasSuffix(name, ".jpg") ||
-					strings.HasSuffix(name, ".jpeg") ||
-					strings.HasSuffix(name, ".bmp")) &&
-					strings.Contains(name, strings.ToLower(exeName)) {
-					iconPath := filepath.Join(dir, entry.Name())
+				name := entry.Name()
+				// Only try formats that Fyne supports
+				if isFyneSupportedImageFormat(name) &&
+					strings.Contains(strings.ToLower(name), strings.ToLower(exeName)) {
+					iconPath := filepath.Join(dir, name)
 					if resource, err := fyne.LoadResourceFromPath(iconPath); err == nil {
 						return resource
 					}
+					// Silently skip if load fails
 				}
 			}
 		}
@@ -983,22 +1087,18 @@ func detectIconFromExecutable(executable string) fyne.Resource {
 	if entries, err := os.ReadDir(dir); err == nil {
 		exeName := filepath.Base(executable)
 		for _, entry := range entries {
-			name := strings.ToLower(entry.Name())
-			// Support multiple image formats
-			if strings.HasSuffix(name, ".png") ||
-				strings.HasSuffix(name, ".jpg") ||
-				strings.HasSuffix(name, ".jpeg") ||
-				strings.HasSuffix(name, ".bmp") ||
-				strings.HasSuffix(name, ".ico") ||
-				strings.HasSuffix(name, ".svg") {
+			name := entry.Name()
+			// Only try formats that Fyne supports (skip SVG and ICO)
+			if isFyneSupportedImageFormat(name) {
 				// Try to match by name
 				baseName := strings.TrimSuffix(strings.ToLower(exeName), filepath.Ext(exeName))
-				iconBaseName := strings.TrimSuffix(strings.ToLower(entry.Name()), filepath.Ext(entry.Name()))
+				iconBaseName := strings.TrimSuffix(strings.ToLower(name), filepath.Ext(name))
 				if strings.Contains(iconBaseName, baseName) || strings.Contains(baseName, iconBaseName) {
-					iconPath := filepath.Join(dir, entry.Name())
+					iconPath := filepath.Join(dir, name)
 					if resource, err := fyne.LoadResourceFromPath(iconPath); err == nil {
 						return resource
 					}
+					// Silently skip if load fails
 				}
 			}
 		}
@@ -2264,6 +2364,28 @@ func showEditAppPropertiesDialog(app App, tabID string) {
 	registerDialog(dialogWindow)
 	dialogWindow.Resize(fyne.NewSize(600, 400))
 
+	// Override close intercept to ensure proper cleanup
+	// This needs to be after registerDialog because it sets up its own intercept
+	dialogWindow.SetCloseIntercept(func() {
+		// Store reference and title before cleanup
+		windowToClose := dialogWindow
+		title := windowToClose.Title()
+
+		// Remove from tracking list
+		for i, w := range childWindows {
+			if w == windowToClose {
+				childWindows = append(childWindows[:i], childWindows[i+1:]...)
+				break
+			}
+		}
+		// Remove from open dialogs map
+		if _, exists := openDialogs[title]; exists {
+			delete(openDialogs, title)
+		}
+		// Close the window
+		windowToClose.Close()
+	})
+
 	// Browse button for executable
 	execBrowseBtn := widget.NewButton("Browse...", func() {
 		dialog.ShowFileOpen(func(reader fyne.URIReadCloser, err error) {
@@ -2339,11 +2461,37 @@ func showEditAppPropertiesDialog(app App, tabID string) {
 		if err := SaveConfig(config, configPath); err != nil {
 			dialog.ShowError(fmt.Errorf("Failed to save config: %v", err), dialogWindow)
 		} else {
+			// Explicitly clean up tracking before closing
+			title := dialogWindow.Title()
+			// Remove from child windows
+			for i, w := range childWindows {
+				if w == dialogWindow {
+					childWindows = append(childWindows[:i], childWindows[i+1:]...)
+					break
+				}
+			}
+			// Remove from open dialogs map
+			if _, exists := openDialogs[title]; exists {
+				delete(openDialogs, title)
+			}
 			dialogWindow.Close()
 		}
 	})
 
 	cancelBtn := widget.NewButton("Cancel", func() {
+		// Explicitly clean up tracking before closing
+		title := dialogWindow.Title()
+		// Remove from child windows
+		for i, w := range childWindows {
+			if w == dialogWindow {
+				childWindows = append(childWindows[:i], childWindows[i+1:]...)
+				break
+			}
+		}
+		// Remove from open dialogs map
+		if _, exists := openDialogs[title]; exists {
+			delete(openDialogs, title)
+		}
 		dialogWindow.Close()
 	})
 
@@ -2373,7 +2521,7 @@ func showChangeIconDialog(app App, tabID string) {
 	iconEntry.Wrapping = fyne.TextWrapOff
 
 	// Icon preview
-	iconPreview := canvas.NewImageFromResource(theme.FolderIcon())
+	iconPreview := canvas.NewImageFromResource(getGenericAppIcon())
 	iconPreview.FillMode = canvas.ImageFillContain
 	iconPreview.SetMinSize(fyne.NewSize(64, 64))
 	iconPreview.Resize(fyne.NewSize(64, 64))
@@ -2394,7 +2542,7 @@ func showChangeIconDialog(app App, tabID string) {
 				iconPreview.Resource = detectedIcon
 				iconPreview.Refresh()
 			} else {
-				iconPreview.Resource = theme.FolderIcon()
+				iconPreview.Resource = getGenericAppIcon()
 				iconPreview.Refresh()
 			}
 		}
@@ -2420,13 +2568,24 @@ func showChangeIconDialog(app App, tabID string) {
 		}
 	}
 
-	// Initialize preview
+	// Initialize preview with fallback to generic icon
 	if app.Icon != "" && fileExists(app.Icon) {
-		if resource, err := fyne.LoadResourceFromPath(app.Icon); err == nil {
-			iconPreview.Resource = resource
+		if isFyneSupportedImageFormat(app.Icon) {
+			if resource, err := fyne.LoadResourceFromPath(app.Icon); err == nil {
+				iconPreview.Resource = resource
+			} else {
+				// Fallback to generic icon if load fails
+				iconPreview.Resource = getGenericAppIcon()
+			}
+		} else {
+			// Unsupported format, use generic icon
+			iconPreview.Resource = getGenericAppIcon()
 		}
 	} else if detectedIcon := detectIconFromExecutable(app.Executable); detectedIcon != nil {
 		iconPreview.Resource = detectedIcon
+	} else {
+		// No icon found, use generic placeholder
+		iconPreview.Resource = getGenericAppIcon()
 	}
 
 	browseBtn := widget.NewButton("Browse...", func() {
@@ -2968,6 +3127,33 @@ func refreshApps() {
 		dialog.ShowError(fmt.Errorf("Failed to save config: %v", err), mainWindow)
 	} else {
 		dialog.ShowInformation("Success", "Applications refreshed", mainWindow)
+	}
+}
+
+// discoverAppsInBackground discovers apps in the background and updates the UI when complete
+func discoverAppsInBackground() {
+	apps, err := DiscoverApps()
+	if err != nil {
+		fmt.Printf("Error discovering apps: %v\n", err)
+		return
+	}
+
+	// Update discoveredApps and merge (safe to do from goroutine - no UI calls)
+	discoveredApps = apps
+	mergeDiscoveredApps()
+
+	// Auto-add newly discovered apps to Home tab (safe - no UI calls)
+	autoAddAppsToHomeTab()
+
+	// Refresh UI on main thread using fyne.Do
+	if mainWindow != nil {
+		fyne.Do(func() {
+			refreshTabsUI()
+			// Refresh the main window content to show new apps
+			if mainWindow.Content() != nil {
+				mainWindow.Content().Refresh()
+			}
+		})
 	}
 }
 
