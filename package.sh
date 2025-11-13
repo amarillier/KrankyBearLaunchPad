@@ -83,7 +83,7 @@ done
 
 # Configurable via env vars
 NAME=${NAME:-KrankyBearLaunchPad}
-VERSION=${VERSION:-0.1.1}
+VERSION=${VERSION:-0.1.2}
 ITERATION=${ITERATION:-1}
 OUTDIR=${OUTDIR:-./installers}
 MAINTAINER=${MAINTAINER:-"amarillier@gmail.com"}

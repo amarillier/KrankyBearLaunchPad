@@ -14,6 +14,13 @@ Release notes
 - Favorites/starred apps
 -
 
+0.1.2
+- More minor improvements
+- Icon browse online and download option
+- Improved internal icon handing based on .ico or .icns files found
+- Improved window handling, resizing, tile/card layout management
+- Mouse position detection when opening the application, open on the same display rather than always on only one
+
 0.1.1
 - Performance improvement, when first run the app will display a dialog indicating application discovery. Subsequent runs, rather than do full application discovery every time before the application is usable, we use the existing list of discovered applications, the user can
  begin working immediately, and we run a background discovery to add or remove applications as needed.

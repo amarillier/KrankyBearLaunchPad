@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -32,7 +34,7 @@ import (
 
 const (
 	// appName    = "KrankyBear LaunchPad"
-	appVersion = "0.1.1" // see FyneApp.toml
+	appVersion = "0.1.2" // see FyneApp.toml
 	appAuthor  = "Allan Marillier"
 )
 
@@ -152,10 +154,6 @@ func main() {
 	savedWidth := myApp.Preferences().FloatWithFallback("windowWidth", 1000)
 	savedHeight := myApp.Preferences().FloatWithFallback("windowHeight", 700)
 	mainWindow.Resize(fyne.NewSize(float32(savedWidth), float32(savedHeight)))
-	// Note: Fyne does not natively support window position saving/restoration.
-	// The Window interface doesn't expose GetPosition() or SetPosition() methods.
-	// Window position is always centered on screen at startup.
-	mainWindow.CenterOnScreen()
 	// Ensure window is resizable (default, but make it explicit)
 	mainWindow.SetFixedSize(false)
 
@@ -193,6 +191,13 @@ func main() {
 	openDialogs = make(map[string]fyne.Window)
 
 	setupUI()
+
+	// Show window before centering to ensure it appears on the correct display
+	// (CenterOnScreen needs the window to be shown to determine which display to use)
+	mainWindow.Show()
+	// Center on the display containing the cursor (already attempted earlier, but
+	// now that window is shown, CenterOnScreen will work correctly)
+	centerWindowOnCursorDisplay(mainWindow)
 	mainWindow.ShowAndRun()
 }
 
@@ -656,40 +661,265 @@ func showUpdateAlert(updtmsg string, releaseURL string, updateAvailable bool) {
 	centerDialogOnMainWindow(updateWindow)
 }
 
-func createAppGrid(tabID string) fyne.CanvasObject {
-	grid := container.NewGridWithColumns(6) // 6 columns
+// DynamicGridWidget is a custom widget that creates a grid with dynamic column count
+type DynamicGridWidget struct {
+	widget.BaseWidget
+	tabID       string
+	grid        *fyne.Container
+	gridWrapper *fyne.Container // Wrapper to constrain grid height
+	scroll      *container.Scroll
+	lastWidth   float32
+}
 
-	// Get apps for this tab
-	tab := getTabByID(tabID)
-	if tab != nil {
-		// Collect apps and sort them alphabetically by name
-		apps := []App{}
-		for _, appID := range tab.AppIDs {
-			app := getAppByID(appID)
-			if app != nil {
-				apps = append(apps, *app)
+// NewDynamicGridWidget creates a new dynamic grid widget
+func NewDynamicGridWidget(tabID string) *DynamicGridWidget {
+	w := &DynamicGridWidget{
+		tabID:     tabID,
+		lastWidth: 0,
+	}
+	w.ExtendBaseWidget(w)
+	return w
+}
+
+// CreateRenderer creates the renderer for the dynamic grid widget
+func (d *DynamicGridWidget) CreateRenderer() fyne.WidgetRenderer {
+	// Create initial grid with estimated columns
+	d.updateGrid(800) // Initial estimate
+
+	// Don't wrap in VBox - use scroll directly to allow proper resizing
+	// The scroll container will handle its own sizing and scrolling
+
+	return &dynamicGridRenderer{
+		widget:  d,
+		objects: []fyne.CanvasObject{d.scroll},
+	}
+}
+
+// updateGrid updates the grid with the appropriate number of columns based on width
+func (d *DynamicGridWidget) updateGrid(availableWidth float32) {
+	// Estimate card width: icon (64) + padding + label space
+	// Use ~120px per card as a reasonable estimate
+	cardWidth := float32(120)
+
+	// Calculate number of columns that fit
+	currentColumns := int(availableWidth / cardWidth)
+	if currentColumns < 1 {
+		currentColumns = 1
+	}
+
+	// Calculate columns for last width
+	lastColumns := int(d.lastWidth / cardWidth)
+	if lastColumns < 1 && d.lastWidth > 0 {
+		lastColumns = 1
+	}
+
+	// Only recreate grid if column count would change
+	if d.grid == nil || d.lastWidth == 0 || currentColumns != lastColumns {
+		d.lastWidth = availableWidth
+
+		// Create new grid with calculated columns
+		d.grid = container.NewGridWithColumns(currentColumns)
+
+		// Get apps for this tab
+		tab := getTabByID(d.tabID)
+		if tab != nil {
+			// Collect apps and sort them alphabetically by name
+			apps := []App{}
+			for _, appID := range tab.AppIDs {
+				app := getAppByID(appID)
+				if app != nil {
+					apps = append(apps, *app)
+				}
+			}
+
+			// Sort apps alphabetically by name (case-insensitive)
+			sort.Slice(apps, func(i, j int) bool {
+				return strings.ToLower(apps[i].Name) < strings.ToLower(apps[j].Name)
+			})
+
+			// Add sorted apps to grid
+			for _, app := range apps {
+				card := createAppCard(app, d.tabID)
+				d.grid.Add(card)
 			}
 		}
 
-		// Sort apps alphabetically by name (case-insensitive)
-		sort.Slice(apps, func(i, j int) bool {
-			return strings.ToLower(apps[i].Name) < strings.ToLower(apps[j].Name)
-		})
+		// Wrap grid in a container that constrains height to minimum size
+		// This prevents vertical stretching while allowing horizontal flexibility
+		if d.gridWrapper == nil {
+			d.gridWrapper = container.NewWithoutLayout()
+		}
+		// Clear and re-add grid to wrapper
+		d.gridWrapper.RemoveAll()
+		d.gridWrapper.Add(d.grid)
 
-		// Add sorted apps to grid
-		for _, app := range apps {
-			card := createAppCard(app, tabID)
-			grid.Add(card)
+		// Create or update scroll container with wrapped grid
+		if d.scroll == nil {
+			d.scroll = container.NewScroll(d.gridWrapper)
+		} else {
+			d.scroll.Content = d.gridWrapper
 		}
 	}
-
-	// Wrap grid in scroll container so all apps are visible
-	scrollContainer := container.NewScroll(grid)
-	return scrollContainer
 }
 
-// getGridFromContainer extracts the actual grid from a scroll container
+// Resize handles widget resize to recalculate columns
+func (d *DynamicGridWidget) Resize(size fyne.Size) {
+	d.BaseWidget.Resize(size)
+	// Recalculate columns based on new width
+	d.updateGrid(size.Width)
+	if d.scroll != nil {
+		d.scroll.Resize(size)
+	}
+}
+
+// dynamicGridRenderer renders the dynamic grid widget
+type dynamicGridRenderer struct {
+	widget  *DynamicGridWidget
+	objects []fyne.CanvasObject
+}
+
+func (r *dynamicGridRenderer) Layout(size fyne.Size) {
+	if r.widget.scroll != nil && r.widget.grid != nil {
+		r.widget.updateGrid(size.Width)
+
+		// Get the grid's natural minimum size (compact, no stretching)
+		gridMinSize := r.widget.grid.MinSize()
+
+		// Set grid wrapper to grid's minimum height to prevent vertical stretching
+		// Width uses full available width
+		if r.widget.gridWrapper != nil {
+			r.widget.gridWrapper.Resize(fyne.NewSize(size.Width, gridMinSize.Height))
+			r.widget.gridWrapper.Move(fyne.NewPos(0, 0))
+
+			// Position grid within wrapper at its natural size (no vertical stretching)
+			if len(r.widget.gridWrapper.Objects) > 0 {
+				r.widget.gridWrapper.Objects[0].Resize(fyne.NewSize(size.Width, gridMinSize.Height))
+				r.widget.gridWrapper.Objects[0].Move(fyne.NewPos(0, 0))
+			}
+		}
+
+		// Resize scroll to full available size - it will handle scrolling internally
+		// This allows the window to be resized vertically
+		r.widget.scroll.Resize(size)
+		r.widget.scroll.Move(fyne.NewPos(0, 0))
+	}
+}
+
+func (r *dynamicGridRenderer) MinSize() fyne.Size {
+	if r.widget.scroll != nil {
+		// Return scroll's minimum size, not grid's - allows window to resize vertically
+		return r.widget.scroll.MinSize()
+	}
+	return fyne.NewSize(100, 100)
+}
+
+func (r *dynamicGridRenderer) Refresh() {
+	if r.widget.scroll != nil {
+		r.widget.scroll.Refresh()
+	}
+}
+
+func (r *dynamicGridRenderer) Objects() []fyne.CanvasObject {
+	return r.objects
+}
+
+func (r *dynamicGridRenderer) Destroy() {}
+
+// TabContentWidget wraps the grid and handles right-clicks on empty space
+type TabContentWidget struct {
+	widget.BaseWidget
+	tabID   string
+	content fyne.CanvasObject
+}
+
+// NewTabContentWidget creates a new tab content widget
+func NewTabContentWidget(tabID string, content fyne.CanvasObject) *TabContentWidget {
+	w := &TabContentWidget{
+		tabID:   tabID,
+		content: content,
+	}
+	w.ExtendBaseWidget(w)
+	return w
+}
+
+// CreateRenderer creates the renderer for the tab content widget
+func (t *TabContentWidget) CreateRenderer() fyne.WidgetRenderer {
+	return &tabContentRenderer{
+		widget:  t,
+		content: t.content,
+		objects: []fyne.CanvasObject{t.content},
+	}
+}
+
+// TappedSecondary handles right-click on empty space
+func (t *TabContentWidget) TappedSecondary(pe *fyne.PointEvent) {
+	if mainWindow == nil {
+		return
+	}
+
+	// Set current tab ID to this tab's ID so edit dialog edits the correct tab
+	currentTabID = t.tabID
+
+	// Show edit tab dialog
+	showEditTabDialog()
+}
+
+// MouseIn is required for desktop mouse events
+func (t *TabContentWidget) MouseIn(*desktop.MouseEvent)    {}
+func (t *TabContentWidget) MouseOut()                      {}
+func (t *TabContentWidget) MouseMoved(*desktop.MouseEvent) {}
+
+// tabContentRenderer renders the tab content widget
+type tabContentRenderer struct {
+	widget  *TabContentWidget
+	content fyne.CanvasObject
+	objects []fyne.CanvasObject
+}
+
+func (r *tabContentRenderer) Layout(size fyne.Size) {
+	r.content.Resize(size)
+	r.content.Move(fyne.NewPos(0, 0))
+}
+
+func (r *tabContentRenderer) MinSize() fyne.Size {
+	// Return content's minimum size - allows window to resize freely
+	return r.content.MinSize()
+}
+
+func (r *tabContentRenderer) Refresh() {
+	r.content.Refresh()
+}
+
+func (r *tabContentRenderer) Objects() []fyne.CanvasObject {
+	return r.objects
+}
+
+func (r *tabContentRenderer) Destroy() {}
+
+func createAppGrid(tabID string) fyne.CanvasObject {
+	// Use dynamic grid widget that adjusts columns based on width
+	dynamicGrid := NewDynamicGridWidget(tabID)
+	// Wrap in TabContentWidget to handle right-clicks on empty space
+	return NewTabContentWidget(tabID, dynamicGrid)
+}
+
+// getGridFromContainer extracts the actual grid from a scroll container or TabContentWidget
 func getGridFromContainer(scrollContainer fyne.CanvasObject) *fyne.Container {
+	// Check if it's a TabContentWidget - unwrap it
+	if tabContent, ok := scrollContainer.(*TabContentWidget); ok {
+		// Get the content (which should be DynamicGridWidget)
+		if dynamicGrid, ok := tabContent.content.(*DynamicGridWidget); ok {
+			return dynamicGrid.grid
+		}
+		// Fallback: try to get grid from content
+		scrollContainer = tabContent.content
+	}
+
+	// Check if it's a DynamicGridWidget
+	if dynamicGrid, ok := scrollContainer.(*DynamicGridWidget); ok {
+		return dynamicGrid.grid
+	}
+
 	// If container is a scroll container, get its content
 	if scroll, ok := scrollContainer.(*container.Scroll); ok {
 		if content := scroll.Content; content != nil {
@@ -708,6 +938,24 @@ func getGridFromContainer(scrollContainer fyne.CanvasObject) *fyne.Container {
 // refreshGridWithSortedApps refreshes a grid with apps sorted alphabetically
 func refreshGridWithSortedApps(tabID string) {
 	if scrollContainer, ok := appGrids[tabID]; ok {
+		// Check if it's a TabContentWidget or DynamicGridWidget - if so, recreate it
+		if _, ok := scrollContainer.(*TabContentWidget); ok {
+			// Recreate the grid to refresh apps
+			newGrid := createAppGrid(tabID)
+			appGrids[tabID] = newGrid
+			// Update the tab container if needed
+			refreshTabsUI()
+			return
+		}
+		if _, ok := scrollContainer.(*DynamicGridWidget); ok {
+			// Recreate the dynamic grid to refresh apps
+			newGrid := createAppGrid(tabID)
+			appGrids[tabID] = newGrid
+			// Update the tab container if needed
+			refreshTabsUI()
+			return
+		}
+
 		grid := getGridFromContainer(scrollContainer)
 		if grid != nil {
 			grid.RemoveAll()
@@ -768,7 +1016,7 @@ func (a *AppCardWidget) CreateRenderer() fyne.WidgetRenderer {
 	label.Wrapping = fyne.TextWrapWord
 	label.Alignment = fyne.TextAlignCenter
 
-	// Create card content with icon and label
+	// Create card content with icon and label - use minimal spacing
 	content := container.NewVBox(
 		container.NewCenter(icon),
 		label,
@@ -785,7 +1033,15 @@ func (a *AppCardWidget) CreateRenderer() fyne.WidgetRenderer {
 }
 
 // Tapped handles single click (launch app)
-func (a *AppCardWidget) Tapped(*fyne.PointEvent) {
+// Only launches if the click is actually on the widget, not on whitespace
+func (a *AppCardWidget) Tapped(pe *fyne.PointEvent) {
+	// Verify the click is within the widget bounds
+	size := a.Size()
+	if pe.Position.X < 0 || pe.Position.X > size.Width ||
+		pe.Position.Y < 0 || pe.Position.Y > size.Height {
+		return // Click outside widget bounds, ignore
+	}
+
 	if err := LaunchApp(a.app); err != nil {
 		dialog.ShowError(fmt.Errorf("Failed to launch %s: %v", a.app.Name, err), mainWindow)
 	}
@@ -850,13 +1106,20 @@ func (a *AppCardWidget) loadAppIcon() *canvas.Image {
 
 	// Try to load icon from saved path first
 	if a.app.Icon != "" && fileExists(a.app.Icon) {
-		// Only try formats that Fyne supports
+		// Try formats that Fyne supports directly
 		if isFyneSupportedImageFormat(a.app.Icon) {
 			resource, err := fyne.LoadResourceFromPath(a.app.Icon)
 			if err == nil {
 				iconResource = resource
 			}
 			// Silently skip if load fails - file might be corrupted or invalid
+		} else if strings.HasSuffix(strings.ToLower(a.app.Icon), ".icns") || strings.HasSuffix(strings.ToLower(a.app.Icon), ".ico") {
+			// Try to extract from .icns or .ico file
+			if extractedPath := extractIconFromIcnsOrIco(a.app.Icon); extractedPath != "" {
+				if resource, err := fyne.LoadResourceFromPath(extractedPath); err == nil {
+					iconResource = resource
+				}
+			}
 		}
 	}
 
@@ -982,13 +1245,20 @@ func (a *AppCardWidget) loadIconResource() fyne.Resource {
 
 	// Try to load icon from various sources
 	if a.app.Icon != "" && fileExists(a.app.Icon) {
-		// Only try formats that Fyne supports
+		// Try formats that Fyne supports directly
 		if isFyneSupportedImageFormat(a.app.Icon) {
 			resource, err := fyne.LoadResourceFromPath(a.app.Icon)
 			if err == nil {
 				iconResource = resource
 			}
 			// Silently skip if load fails
+		} else if strings.HasSuffix(strings.ToLower(a.app.Icon), ".icns") || strings.HasSuffix(strings.ToLower(a.app.Icon), ".ico") {
+			// Try to extract from .icns or .ico file
+			if extractedPath := extractIconFromIcnsOrIco(a.app.Icon); extractedPath != "" {
+				if resource, err := fyne.LoadResourceFromPath(extractedPath); err == nil {
+					iconResource = resource
+				}
+			}
 		}
 	}
 
@@ -1032,6 +1302,69 @@ func isFyneSupportedImageFormat(filename string) bool {
 		strings.HasSuffix(name, ".bmp")
 }
 
+// extractIconFromIcnsOrIco extracts an icon from .icns or .ico file and converts it to PNG
+// Returns the path to the converted PNG file, or empty string if extraction fails
+func extractIconFromIcnsOrIco(iconPath string) string {
+	if iconPath == "" || !fileExists(iconPath) {
+		return ""
+	}
+
+	name := strings.ToLower(iconPath)
+	isIcns := strings.HasSuffix(name, ".icns")
+	isIco := strings.HasSuffix(name, ".ico")
+
+	if !isIcns && !isIco {
+		return ""
+	}
+
+	// Create cache directory for extracted icons
+	cacheDir := filepath.Join(filepath.Dir(configPath), "icon_cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return ""
+	}
+
+	// Generate cache filename based on icon path hash
+	hashBytes := sha256.Sum256([]byte(iconPath))
+	hash := hex.EncodeToString(hashBytes[:])[:16] // Use first 16 chars of hash
+	cacheFile := filepath.Join(cacheDir, hash+".png")
+
+	// Check if we already have a cached version
+	if fileExists(cacheFile) {
+		return cacheFile
+	}
+
+	// Extract icon using system tools
+	var cmd *exec.Cmd
+	if isIcns && runtime.GOOS == "darwin" {
+		// Use sips on macOS to extract from .icns
+		// Extract the largest icon (typically 512x512 or 1024x1024)
+		cmd = exec.Command("sips", "-s", "format", "png", iconPath, "--out", cacheFile)
+	} else if isIco {
+		// For .ico files, try using ImageMagick or sips if available
+		if runtime.GOOS == "darwin" {
+			// Try sips first (macOS)
+			cmd = exec.Command("sips", "-s", "format", "png", iconPath, "--out", cacheFile)
+		} else if runtime.GOOS == "windows" {
+			// On Windows, we could use PowerShell or a Go library
+			// For now, return empty - could be enhanced later
+			return ""
+		} else {
+			// Linux - try ImageMagick if available
+			cmd = exec.Command("convert", iconPath, cacheFile)
+		}
+	} else {
+		return ""
+	}
+
+	if cmd != nil {
+		if err := cmd.Run(); err == nil && fileExists(cacheFile) {
+			return cacheFile
+		}
+	}
+
+	return ""
+}
+
 // detectIconFromExecutable tries to find an icon based on the executable path
 func detectIconFromExecutable(executable string) fyne.Resource {
 	// For macOS .app bundles, look for icon in Resources
@@ -1048,7 +1381,7 @@ func detectIconFromExecutable(executable string) fyne.Resource {
 
 		resourcesDir := filepath.Join(appPath, "Contents", "Resources")
 		if entries, err := os.ReadDir(resourcesDir); err == nil {
-			// Only try formats that Fyne supports
+			// First try formats that Fyne supports directly
 			for _, entry := range entries {
 				name := entry.Name()
 				if isFyneSupportedImageFormat(name) {
@@ -1057,6 +1390,18 @@ func detectIconFromExecutable(executable string) fyne.Resource {
 						return resource
 					}
 					// Silently skip if load fails - file might be corrupted or invalid
+				}
+			}
+			// Then try .icns files (extract to PNG)
+			for _, entry := range entries {
+				name := entry.Name()
+				if strings.HasSuffix(strings.ToLower(name), ".icns") {
+					iconPath := filepath.Join(resourcesDir, name)
+					if extractedPath := extractIconFromIcnsOrIco(iconPath); extractedPath != "" {
+						if resource, err := fyne.LoadResourceFromPath(extractedPath); err == nil {
+							return resource
+						}
+					}
 				}
 			}
 		}
@@ -1115,6 +1460,7 @@ type appCardRenderer struct {
 }
 
 func (r *appCardRenderer) Layout(size fyne.Size) {
+	// Set content to match widget size exactly - no extra space
 	r.content.Resize(size)
 	r.content.Move(fyne.NewPos(0, 0))
 }
@@ -1157,7 +1503,9 @@ func (r *appCardRenderer) Destroy() {}
 // Update createAppCard to use the new widget
 func createAppCard(app App, tabID string) fyne.CanvasObject {
 	card := NewAppCardWidget(app, tabID)
-	return container.NewPadded(card)
+	// Return card directly without extra padding - grid will handle spacing
+	// This makes cards fit closer together, matching home tab behavior
+	return card
 }
 
 // createColoredTabItem creates a TabItem with an optional colored icon indicator
@@ -2513,18 +2861,40 @@ func showChangeIconDialog(app App, tabID string) {
 	}
 
 	dialogWindow := myApp.NewWindow("Change Icon")
-	dialogWindow.Resize(fyne.NewSize(500, 200))
+	dialogWindow.Resize(fyne.NewSize(600, 400))
 	registerDialog(dialogWindow)
+
+	// Override close intercept to ensure proper cleanup
+	// This needs to be after registerDialog because it sets up its own intercept
+	dialogWindow.SetCloseIntercept(func() {
+		// Store reference and title before cleanup
+		windowToClose := dialogWindow
+		title := windowToClose.Title()
+
+		// Remove from tracking list
+		for i, w := range childWindows {
+			if w == windowToClose {
+				childWindows = append(childWindows[:i], childWindows[i+1:]...)
+				break
+			}
+		}
+		// Remove from open dialogs map
+		if _, exists := openDialogs[title]; exists {
+			delete(openDialogs, title)
+		}
+		// Close the window
+		windowToClose.Close()
+	})
 
 	iconEntry := widget.NewEntry()
 	iconEntry.SetText(app.Icon)
 	iconEntry.Wrapping = fyne.TextWrapOff
 
-	// Icon preview
+	// Icon preview - make it larger for better visibility
 	iconPreview := canvas.NewImageFromResource(getGenericAppIcon())
 	iconPreview.FillMode = canvas.ImageFillContain
-	iconPreview.SetMinSize(fyne.NewSize(64, 64))
-	iconPreview.Resize(fyne.NewSize(64, 64))
+	iconPreview.SetMinSize(fyne.NewSize(128, 128))
+	iconPreview.Resize(fyne.NewSize(128, 128))
 
 	// Function to update icon preview and apply immediately
 	updateIcon := func(iconPath string) {
@@ -2532,7 +2902,18 @@ func showChangeIconDialog(app App, tabID string) {
 
 		// Update preview
 		if iconPath != "" && fileExists(iconPath) {
-			if resource, err := fyne.LoadResourceFromPath(iconPath); err == nil {
+			var resource fyne.Resource
+			var err error
+			// Try direct load first
+			if isFyneSupportedImageFormat(iconPath) {
+				resource, err = fyne.LoadResourceFromPath(iconPath)
+			} else if strings.HasSuffix(strings.ToLower(iconPath), ".icns") || strings.HasSuffix(strings.ToLower(iconPath), ".ico") {
+				// Try to extract from .icns or .ico file
+				if extractedPath := extractIconFromIcnsOrIco(iconPath); extractedPath != "" {
+					resource, err = fyne.LoadResourceFromPath(extractedPath)
+				}
+			}
+			if err == nil && resource != nil {
 				iconPreview.Resource = resource
 				iconPreview.Refresh()
 			}
@@ -2570,15 +2951,20 @@ func showChangeIconDialog(app App, tabID string) {
 
 	// Initialize preview with fallback to generic icon
 	if app.Icon != "" && fileExists(app.Icon) {
+		var resource fyne.Resource
+		var err error
 		if isFyneSupportedImageFormat(app.Icon) {
-			if resource, err := fyne.LoadResourceFromPath(app.Icon); err == nil {
-				iconPreview.Resource = resource
-			} else {
-				// Fallback to generic icon if load fails
-				iconPreview.Resource = getGenericAppIcon()
+			resource, err = fyne.LoadResourceFromPath(app.Icon)
+		} else if strings.HasSuffix(strings.ToLower(app.Icon), ".icns") || strings.HasSuffix(strings.ToLower(app.Icon), ".ico") {
+			// Try to extract from .icns or .ico file
+			if extractedPath := extractIconFromIcnsOrIco(app.Icon); extractedPath != "" {
+				resource, err = fyne.LoadResourceFromPath(extractedPath)
 			}
+		}
+		if err == nil && resource != nil {
+			iconPreview.Resource = resource
 		} else {
-			// Unsupported format, use generic icon
+			// Fallback to generic icon if load fails
 			iconPreview.Resource = getGenericAppIcon()
 		}
 	} else if detectedIcon := detectIconFromExecutable(app.Executable); detectedIcon != nil {
@@ -2600,25 +2986,76 @@ func showChangeIconDialog(app App, tabID string) {
 			defer reader.Close()
 			iconPath := reader.URI().Path()
 			updateIcon(iconPath)
+			// Explicitly clean up tracking before closing
+			title := dialogWindow.Title()
+			// Remove from child windows
+			for i, w := range childWindows {
+				if w == dialogWindow {
+					childWindows = append(childWindows[:i], childWindows[i+1:]...)
+					break
+				}
+			}
+			// Remove from open dialogs map
+			if _, exists := openDialogs[title]; exists {
+				delete(openDialogs, title)
+			}
 			// Close dialog after selection
 			dialogWindow.Close()
 		}, dialogWindow)
 	})
 
-	iconEntryContainer := container.NewBorder(nil, nil, nil, browseBtn, iconEntry)
+	searchOnlineBtn := widget.NewButton("Search Online", func() {
+		// Construct Google Images search URL for app icon
+		searchQuery := url.QueryEscape(app.Name + " icon png")
+		searchURL := fmt.Sprintf("https://www.google.com/search?q=%s&tbm=isch", searchQuery)
 
+		// Open browser with search URL
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("cmd", "/c", "start", searchURL)
+		} else if runtime.GOOS == "linux" {
+			cmd = exec.Command("xdg-open", searchURL)
+		} else {
+			// macOS
+			cmd = exec.Command("open", searchURL)
+		}
+
+		if err := cmd.Run(); err != nil {
+			dialog.ShowError(fmt.Errorf("Failed to open browser: %v", err), dialogWindow)
+		}
+	})
+
+	// Put icon path entry on its own row, full width
 	formContent := container.NewVBox(
 		container.NewHBox(
 			container.NewCenter(iconPreview),
 			container.NewVBox(
 				widget.NewLabel("Icon Path:"),
-				container.NewPadded(iconEntryContainer),
+				container.NewPadded(iconEntry),
+				widget.NewLabel(""), // Spacer
+				container.NewHBox(browseBtn, searchOnlineBtn),
+				widget.NewLabel(""), // Spacer
 				widget.NewLabel("Supported formats: PNG, JPG, JPEG, BMP, ICO, ICNS"),
+				widget.NewLabel(""), // Spacer
+				widget.NewLabel("Tip: Use 'Search Online' to find icons, then 'Browse' to select the downloaded file."),
 			),
 		),
 	)
 
 	closeBtn := widget.NewButton("Close", func() {
+		// Explicitly clean up tracking before closing
+		title := dialogWindow.Title()
+		// Remove from child windows
+		for i, w := range childWindows {
+			if w == dialogWindow {
+				childWindows = append(childWindows[:i], childWindows[i+1:]...)
+				break
+			}
+		}
+		// Remove from open dialogs map
+		if _, exists := openDialogs[title]; exists {
+			delete(openDialogs, title)
+		}
 		dialogWindow.Close()
 	})
 
@@ -3274,6 +3711,31 @@ func expandPath(path string) string {
 	path = os.ExpandEnv(path)
 
 	return path
+}
+
+// positionWindowOnDisplay attempts to position the window on the display containing the cursor
+// Returns true if positioning was successful, false otherwise
+// This is implemented in platform-specific files
+func positionWindowOnDisplay(window fyne.Window, cursorX, cursorY int) bool {
+	return positionWindowOnDisplayImpl(window, cursorX, cursorY)
+}
+
+// centerWindowOnCursorDisplay attempts to center the window on the display containing the mouse cursor
+// Falls back to CenterOnScreen() if cursor position cannot be determined or if positioning fails
+func centerWindowOnCursorDisplay(window fyne.Window) {
+	cursorX, cursorY := getCursorPosition()
+
+	// If we couldn't get cursor position, fall back to default behavior
+	if cursorX == 0 && cursorY == 0 {
+		window.CenterOnScreen()
+		return
+	}
+
+	// Try to position window on the display containing the cursor
+	if !positionWindowOnDisplay(window, cursorX, cursorY) {
+		// Fallback: center on screen (will use primary display)
+		window.CenterOnScreen()
+	}
 }
 
 // centerDialogOnMainWindow positions a dialog window relative to the main window
