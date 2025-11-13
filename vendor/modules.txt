@@ -1,4 +1,4 @@
-# fyne.io/fyne/v2 v2.6.3
+# fyne.io/fyne/v2 v2.7.0
 ## explicit; go 1.19
 fyne.io/fyne/v2
 fyne.io/fyne/v2/app
@@ -8,7 +8,9 @@ fyne.io/fyne/v2/data/binding
 fyne.io/fyne/v2/dialog
 fyne.io/fyne/v2/driver
 fyne.io/fyne/v2/driver/desktop
+fyne.io/fyne/v2/driver/embedded
 fyne.io/fyne/v2/driver/mobile
+fyne.io/fyne/v2/driver/software
 fyne.io/fyne/v2/internal
 fyne.io/fyne/v2/internal/animation
 fyne.io/fyne/v2/internal/app
@@ -18,6 +20,7 @@ fyne.io/fyne/v2/internal/cache
 fyne.io/fyne/v2/internal/color
 fyne.io/fyne/v2/internal/driver
 fyne.io/fyne/v2/internal/driver/common
+fyne.io/fyne/v2/internal/driver/embedded
 fyne.io/fyne/v2/internal/driver/glfw
 fyne.io/fyne/v2/internal/driver/mobile
 fyne.io/fyne/v2/internal/driver/mobile/app
@@ -47,19 +50,19 @@ fyne.io/fyne/v2/storage/repository
 fyne.io/fyne/v2/test
 fyne.io/fyne/v2/theme
 fyne.io/fyne/v2/widget
-# fyne.io/systray v1.11.0
+# fyne.io/systray v1.11.1-0.20250603113521-ca66a66d8b58
 ## explicit; go 1.19
 fyne.io/systray
 fyne.io/systray/internal/generated/menu
 fyne.io/systray/internal/generated/notifier
-# github.com/BurntSushi/toml v1.4.0
+# github.com/BurntSushi/toml v1.5.0
 ## explicit; go 1.18
 github.com/BurntSushi/toml
 github.com/BurntSushi/toml/internal
 # github.com/davecgh/go-spew v1.1.1
 ## explicit
 github.com/davecgh/go-spew/spew
-# github.com/fredbi/uri v1.1.0
+# github.com/fredbi/uri v1.1.1
 ## explicit; go 1.19
 github.com/fredbi/uri
 # github.com/fsnotify/fsnotify v1.9.0
@@ -75,7 +78,7 @@ github.com/fyne-io/glfw-js
 # github.com/fyne-io/image v0.1.1
 ## explicit; go 1.19
 github.com/fyne-io/image/ico
-# github.com/fyne-io/oksvg v0.1.0
+# github.com/fyne-io/oksvg v0.2.0
 ## explicit; go 1.19
 github.com/fyne-io/oksvg
 # github.com/go-gl/gl v0.0.0-20231021071112-07e5d0ea2e71
@@ -144,7 +147,7 @@ github.com/nicksnyder/go-i18n/v2/internal/plural
 # github.com/pmezard/go-difflib v1.0.0
 ## explicit
 github.com/pmezard/go-difflib/difflib
-# github.com/rymdport/portal v0.4.1
+# github.com/rymdport/portal v0.4.2
 ## explicit; go 1.19
 github.com/rymdport/portal
 github.com/rymdport/portal/filechooser
@@ -161,7 +164,7 @@ github.com/srwiley/oksvg
 # github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 ## explicit; go 1.17
 github.com/srwiley/rasterx
-# github.com/stretchr/testify v1.10.0
+# github.com/stretchr/testify v1.11.1
 ## explicit; go 1.17
 github.com/stretchr/testify/assert
 github.com/stretchr/testify/assert/yaml

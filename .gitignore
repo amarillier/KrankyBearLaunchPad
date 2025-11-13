@@ -4,25 +4,11 @@
 *.dll
 *.so
 *.dylib
-*.syso
 
-*.res
-BusinessApp.res
-
+# Test files
 test/*
-TaniumContent/*
-winres/*
-git.sh
-git.txt
-
-# Test binary, built with `go test -c`
-*.test
-
-# Output of the go coverage tool
-*.out
-
-# Go workspace file
-go.work
+test.log
+test-*.log
 
 # IDE and editor files
 .vscode/
@@ -32,18 +18,26 @@ go.work
 *~
 .DS_Store
 
-## Build artifacts
-netinfo
-dist/
-build/
-Inno/*
-# ALLOWED
-!bin/*
-!Resources/*
-!Inno/BusinessApp.iss
-!Inno/MiniBot.ico
-!Inno/license.txt
-
+# git setup stuff
+git.sh
 
 # Update checker data
 latestcheck.json
+
+## Build artifacts
+bin/.DS_Store
+Resources/.DS_Store
+dist/
+build/
+KrankyBearLaunchPad.app/
+vendor/*
+sync*.sh
+compile-all.sh
+compile-windows-ssh.sh
+
+# ALLOWED
+!bin/*
+!installers/*
+!Resources/*
+!Inno/*
+

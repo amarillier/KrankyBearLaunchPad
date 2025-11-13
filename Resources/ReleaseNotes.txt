@@ -1,15 +1,17 @@
 Release notes
 
-Planned updates:
-0.NEXT
-- installers - Mac pkg, setup.exe, .rpm, .deb, maybe others, as well as portable app versions will continue
-
-
-Known issues:
-- 
-
+0.1.NEXT
+- Window position saving/restoration (currently limited by Fyne framework)
+- Additional package manager support
+- App icon auto-detection improvements
+- Keyboard shortcuts for common operations
+- Drag and drop app organization
+- Export/import configuration
+- App categories/tags
+- Recent apps tracking
+- Favorites/starred apps
+-
 
 0.1.0 
 - initial checkin
-
-# "Now this is not the end. It is not even the beginning of the end. But it is, perhaps, the end of the beginning." Winston Churchill, November 10, 1942
+- Windows, Linux and MacOS application launchpad

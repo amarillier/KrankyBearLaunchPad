@@ -4,7 +4,7 @@ Name = "KrankyBear LaunchPad"
 Creator = "Allan Marillier"
 Version = "0.1.0"
 Build = 2
-Icon = "KrankyBearBeret.png"
+Icon = "KrankyBearTrapperRedPlaid.png"
 
 [Migrations]
   fyneDo = true

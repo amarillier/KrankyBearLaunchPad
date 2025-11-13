@@ -1,5 +1,6 @@
 //go:generate fyne bundle -o bundled.go -a Resources/Images/KrankyBearBeret.png
 //go:generate fyne bundle -o bundled.go -a Resources/Images/KrankyBearTrapperRedPlaid.png
+//go:generate fyne bundle -o bundled.go -a Resources/Images/KrankyBearChristmasGrinch.png
 
 package main
 

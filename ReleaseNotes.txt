@@ -1,7 +1,16 @@
 Release notes
 
 0.1.NEXT
-- nothing specific planned for now
+- Window position saving/restoration (currently limited by Fyne framework)
+- Additional package manager support
+- App icon auto-detection improvements
+- Keyboard shortcuts for common operations
+- Drag and drop app organization
+- Export/import configuration
+- App categories/tags
+- Recent apps tracking
+- Favorites/starred apps
+-
 
 0.1.0 
 - initial checkin

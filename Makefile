@@ -60,8 +60,8 @@ build-darwin:
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GOBUILD) -ldflags="-w -s" -o $(BUILD_DIR)/$(BINARY_NAME)-macos-arm64
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GOBUILD) -ldflags="-w -s" -o $(BUILD_DIR)/$(BINARY_NAME)-macos-amd64
 	# set executable icon
-	./setIcon.sh Resources/Images/KrankyBearBeret.png $(BUILD_DIR)/$(BINARY_NAME)-macos-arm64
-	./setIcon.sh Resources/Images/KrankyBearBeret.png $(BUILD_DIR)/$(BINARY_NAME)-macos-amd64
+	./setIcon.sh Resources/Images/KrankyBearRedPlaidTrapper.png $(BUILD_DIR)/$(BINARY_NAME)-macos-arm64
+	./setIcon.sh Resources/Images/KrankyBearRedPlaidTrapper.png $(BUILD_DIR)/$(BINARY_NAME)-macos-amd64
 	cp $(BUILD_DIR)/$(BINARY_NAME)-macos-arm64 ./launchpad
 
 build-windows:
@@ -70,7 +70,7 @@ build-windows:
 	@echo "Note: Requires mingw-w64 (brew install mingw-w64 on macOS)"
 	@echo "Note: Console window enabled so flags (-version, -help) work. Use Start-Process -WindowStyle Hidden to hide."
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC="x86_64-w64-mingw32-gcc" $(GOBUILD) -ldflags="-w -s" -o $(BUILD_DIR)/$(BINARY_NAME)-win-amd64.exe -v
-	./setIcon.sh Resources/Images/KrankyBearBeret.png $(BUILD_DIR)/$(BINARY_NAME)-win-amd64.exe
+	./setIcon.sh Resources/Images/KrankyBearRedPlaidTrapper.png $(BUILD_DIR)/$(BINARY_NAME)-win-amd64.exe
 
 build-windows-debug:
 	@echo "Building Windows DEBUG version (with console output)..."

@@ -11,7 +11,19 @@ A cross-platform application launcher similar to macOS LaunchPad, built with Go 
   - Windows: Chocolatey, Winget, Scoop
   - Linux: APT, RPM/YUM/DNF, Zypper, Snap
 - **Tab Organization**: Create custom tabs to organize applications
-- **Custom Apps**: Add manually installed applications
+  - Create, edit, delete, and sort tabs
+  - Home tab automatically includes all discovered apps
+  - Tab selection is remembered between sessions
+- **Custom Apps**: Add manually installed applications with custom icons
+- **Theme Support**: Light and dark themes with preference persistence
+- **System Tray Integration**: Run in background with system tray menu
+- **Update Checker**: Check for updates from GitHub releases
+- **Window State Memory**: Remembers window size and selected tab between sessions
+- **App Management**: 
+  - Add apps to multiple tabs
+  - Edit app properties (name, executable, icon)
+  - Remove apps from tabs
+  - Filter and search applications
 
 ## Quick Start
 

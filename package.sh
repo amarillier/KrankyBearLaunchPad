@@ -28,7 +28,7 @@ Environment variables (optional):
   MAINTAINER  Maintainer (default: amarillier@gmail.com)
   VENDOR      Vendor (default: KrankyBear)
   URL         Project URL (default: https://github.com/amarillier/KrankyBearLaunchPad)
-  LICENSE     License (default: MIT)
+  LICENSE     License (default: GNU GPL v3)
 
 Examples:
   # Build macOS package
@@ -89,7 +89,7 @@ OUTDIR=${OUTDIR:-./installers}
 MAINTAINER=${MAINTAINER:-"amarillier@gmail.com"}
 VENDOR=${VENDOR:-"KrankyBear"}
 URL=${URL:-"https://github.com/amarillier/KrankyBearLaunchPad"}
-LICENSE=${LICENSE:-"MIT"}
+LICENSE=${LICENSE:-"GNU GPL v3"}
 
 # Function to build packages for a specific type
 build_package() {
@@ -143,8 +143,8 @@ build_package() {
     SRC_SOUNDS=""
   else
     SRC_BIN="bin/launchpad-linux"
-    SRC_IMAGES="bin/Images"
-    SRC_SOUNDS="bin/Sounds"
+    SRC_IMAGES="Resources/Images"
+    SRC_SOUNDS="Resources/Sounds"
   fi
 
   # Validate sources
@@ -343,7 +343,7 @@ build_package() {
       --package "$PKG_OUTFILE" \
       "${FPM_FILES[@]}"
     
-    ./setIcon.sh Resources/Images/KrankyBearHogwartsSorting.png "$PKG_OUTFILE"
+    ./setIcon.sh Resources/Images/KrankyBearTrapperRedPlaid.png "$PKG_OUTFILE"
     echo ""
     echo "Done. Package created:"
     echo "  $PKG_OUTFILE"

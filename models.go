@@ -19,9 +19,10 @@ type App struct {
 
 // Tab represents a tab/category in the launchpad
 type Tab struct {
-	ID    string   `json:"id"`    // Unique identifier
-	Name  string   `json:"name"`  // Display name
+	ID     string   `json:"id"`      // Unique identifier
+	Name   string   `json:"name"`    // Display name
 	AppIDs []string `json:"app_ids"` // List of app IDs in this tab
+	Color  string   `json:"color"`   // Tab color in hex format (e.g., "#FF0000" or empty for default)
 }
 
 // Config represents the application configuration

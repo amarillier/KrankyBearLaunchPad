@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -50,6 +53,7 @@ var (
 	menuBar        *fyne.Container        // Reference to menuBar for easy updates
 	openDialogs    map[string]fyne.Window // Track open dialogs by title to prevent duplicates
 	updateWindow   fyne.Window            // Update check window
+	helpWindow     fyne.Window            // Help window
 )
 
 func main() {
@@ -76,12 +80,47 @@ func main() {
 		}
 	}
 
+	// Show loading window while discovering applications
+	loadingWindow := myApp.NewWindow("KrankyBear LaunchPad")
+	_, month, _ := time.Now().Date()
+	if month == time.December {
+		loadingWindow.SetIcon(resourceKrankyBearChristmasGrinchPng)
+	} else {
+		loadingWindow.SetIcon(resourceKrankyBearTrapperRedPlaidPng)
+	}
+	loadingWindow.Resize(fyne.NewSize(400, 200))
+	loadingWindow.CenterOnScreen()
+	loadingWindow.SetFixedSize(true)
+
+	// Create loading content
+	loadingIcon := canvas.NewImageFromResource(resourceKrankyBearTrapperRedPlaidPng)
+	if month == time.December {
+		loadingIcon = canvas.NewImageFromResource(resourceKrankyBearChristmasGrinchPng)
+	}
+	loadingIcon.FillMode = canvas.ImageFillContain
+	loadingIcon.SetMinSize(fyne.NewSize(64, 64))
+
+	loadingLabel := widget.NewLabel("Discovering applications... this could take a few seconds\nPlease wait.")
+	loadingLabel.Alignment = fyne.TextAlignCenter
+	loadingLabel.Wrapping = fyne.TextWrapWord
+
+	loadingContent := container.NewVBox(
+		container.NewCenter(loadingIcon),
+		loadingLabel,
+	)
+	loadingWindow.SetContent(container.NewPadded(loadingContent))
+	loadingWindow.Show()
+	loadingWindow.Canvas().Refresh(loadingContent) // Ensure window is rendered
+
 	// Discover installed applications
 	discoveredApps, err = DiscoverApps()
 	if err != nil {
 		fmt.Printf("Error discovering apps: %v\n", err)
 		discoveredApps = []App{}
 	}
+
+	// Close loading window
+	loadingWindow.Close()
 
 	// Merge discovered apps with saved apps (avoid duplicates)
 	mergeDiscoveredApps()
@@ -90,13 +129,45 @@ func main() {
 	autoAddAppsToHomeTab()
 
 	mainWindow = myApp.NewWindow("KrankyBear LaunchPad")
-	mainWindow.Resize(fyne.NewSize(1000, 700))
+
+	// Set icon based on month - Christmas Grinch in December, otherwise Trapper Red Plaid
+	if month == time.December {
+		mainWindow.SetIcon(resourceKrankyBearChristmasGrinchPng)
+	} else {
+		mainWindow.SetIcon(resourceKrankyBearTrapperRedPlaidPng)
+	}
+
+	// Restore saved window size, or use defaults
+	savedWidth := myApp.Preferences().FloatWithFallback("windowWidth", 1000)
+	savedHeight := myApp.Preferences().FloatWithFallback("windowHeight", 700)
+	mainWindow.Resize(fyne.NewSize(float32(savedWidth), float32(savedHeight)))
+	// Note: Fyne does not natively support window position saving/restoration.
+	// The Window interface doesn't expose GetPosition() or SetPosition() methods.
+	// Window position is always centered on screen at startup.
 	mainWindow.CenterOnScreen()
 	// Ensure window is resizable (default, but make it explicit)
 	mainWindow.SetFixedSize(false)
 
+	// Save window size when it's resized
+	// Note: We'll save on close as well, but this helps capture size changes during use
+	mainWindow.SetOnClosed(func() {
+		// Save window size before closing
+		if mainWindow != nil && mainWindow.Canvas() != nil {
+			size := mainWindow.Canvas().Size()
+			myApp.Preferences().SetFloat("windowWidth", float64(size.Width))
+			myApp.Preferences().SetFloat("windowHeight", float64(size.Height))
+		}
+	})
+
 	// Close all child windows when main window closes
 	mainWindow.SetCloseIntercept(func() {
+		// Save window size before closing
+		if mainWindow != nil && mainWindow.Canvas() != nil {
+			size := mainWindow.Canvas().Size()
+			myApp.Preferences().SetFloat("windowWidth", float64(size.Width))
+			myApp.Preferences().SetFloat("windowHeight", float64(size.Height))
+		}
+
 		closeAllChildWindows()
 		// Clean up system tray if it exists
 		if desk, ok := myApp.(desktop.App); ok {
@@ -107,7 +178,8 @@ func main() {
 	})
 
 	appGrids = make(map[string]fyne.CanvasObject)
-	currentTabID = "home"
+	// Restore saved tab, or default to "home"
+	currentTabID = myApp.Preferences().StringWithFallback("currentTabID", "home")
 	childWindows = []fyne.Window{}
 	openDialogs = make(map[string]fyne.Window)
 
@@ -127,7 +199,7 @@ func setupUI() {
 	for _, tab := range config.Tabs {
 		grid := createAppGrid(tab.ID)
 		appGrids[tab.ID] = grid
-		tabItems = append(tabItems, container.NewTabItem(tab.Name, grid))
+		tabItems = append(tabItems, createColoredTabItem(tab, grid))
 	}
 
 	tabContainer = container.NewAppTabs(tabItems...)
@@ -138,6 +210,23 @@ func setupUI() {
 		for _, t := range config.Tabs {
 			if t.Name == tab.Text {
 				currentTabID = t.ID
+				// Save selected tab to preferences
+				myApp.Preferences().SetString("currentTabID", currentTabID)
+				break
+			}
+		}
+	}
+
+	// Restore saved tab selection
+	if savedTabID := myApp.Preferences().StringWithFallback("currentTabID", ""); savedTabID != "" {
+		// Find the tab by ID and select it
+		for i, tab := range config.Tabs {
+			if tab.ID == savedTabID {
+				// Find the corresponding tab item in tabContainer
+				if i < len(tabContainer.Items) {
+					tabContainer.SelectTabIndex(i)
+					currentTabID = savedTabID
+				}
 				break
 			}
 		}
@@ -208,6 +297,8 @@ func createMenuBar() *fyne.Container {
 	)
 
 	helpMenu := fyne.NewMenu("Help",
+		menuItems["Help"],
+		fyne.NewMenuItemSeparator(),
 		menuItems["Check for Update"],
 		fyne.NewMenuItemSeparator(),
 		menuItems["About"],
@@ -257,6 +348,9 @@ func createMenuItems() map[string]*fyne.MenuItem {
 		"Check for Update": fyne.NewMenuItem("Check for Update", func() {
 			checkForUpdate()
 		}),
+		"Help": fyne.NewMenuItem("Help", func() {
+			showHelpDialog()
+		}),
 		"About": fyne.NewMenuItem("About", func() {
 			showAboutDialog()
 		}),
@@ -291,6 +385,7 @@ func setupSystemTrayMenu(menuItems map[string]*fyne.MenuItem) {
 			fyne.NewMenuItemSeparator(),
 			menuItems["Theme Settings"],
 			fyne.NewMenuItemSeparator(),
+			menuItems["Help"],
 			menuItems["Check for Update"],
 			menuItems["About"],
 			fyne.NewMenuItemSeparator(),
@@ -323,8 +418,6 @@ func checkForUpdate() {
 
 	// Run update check in goroutine to avoid blocking UI
 	go func() {
-		defer checkingDialog.Hide()
-
 		// GitHub API URL for releases (using public API, no auth needed)
 		apiURL := "https://api.github.com/repos/amarillier/KrankyBearLaunchPad/releases/latest"
 
@@ -334,24 +427,28 @@ func checkForUpdate() {
 
 		resp, err := client.Get(apiURL)
 		if err != nil {
+			checkingDialog.Hide()
 			dialog.ShowError(fmt.Errorf("Failed to check for updates: %v", err), mainWindow)
 			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			checkingDialog.Hide()
 			dialog.ShowError(fmt.Errorf("Failed to check for updates: HTTP %d", resp.StatusCode), mainWindow)
 			return
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
+			checkingDialog.Hide()
 			dialog.ShowError(fmt.Errorf("Failed to read update information: %v", err), mainWindow)
 			return
 		}
 
 		var release GitHubRelease
 		if err := json.Unmarshal(body, &release); err != nil {
+			checkingDialog.Hide()
 			dialog.ShowError(fmt.Errorf("Failed to parse update information: %v", err), mainWindow)
 			return
 		}
@@ -370,8 +467,12 @@ func checkForUpdate() {
 				currentVersion, latestVersion)
 		}
 
-		// Show update alert window
-		showUpdateAlert(message, release.URL, latestVersion != currentVersion)
+		// Hide checking dialog and show update alert window on main thread
+		checkingDialog.Hide()
+		// Use fyne.Do to ensure UI operations happen on main thread
+		fyne.Do(func() {
+			showUpdateAlert(message, release.URL, latestVersion != currentVersion)
+		})
 	}()
 }
 
@@ -385,6 +486,23 @@ func showUpdateAlert(updtmsg string, releaseURL string, updateAvailable bool) {
 	}
 	myreleaselink := widget.NewHyperlink(releaseURL, releaselink)
 	myreleaselink.Alignment = fyne.TextAlignLeading
+
+	releasenoteslink, rnerr := url.Parse("https://github.com/amarillier/KrankyBearLaunchPad/blob/allanm/ReleaseNotes.txt")
+	if rnerr != nil {
+		fyne.LogError("Could not parse URL", rnerr)
+	}
+	myreleasenoteslink := widget.NewHyperlink("https://github.com/amarillier/KrankyBearLaunchPad/blob/allanm/ReleaseNotes.txt", releasenoteslink)
+	myreleasenoteslink.Alignment = fyne.TextAlignLeading
+
+	// Create image - use Christmas Grinch in December, otherwise Trapper Red Plaid
+	var kbimg *canvas.Image
+	_, month, _ := time.Now().Date()
+	if month == time.December {
+		kbimg = canvas.NewImageFromResource(resourceKrankyBearChristmasGrinchPng)
+	} else {
+		kbimg = canvas.NewImageFromResource(resourceKrankyBearTrapperRedPlaidPng)
+	}
+	kbimg.FillMode = canvas.ImageFillOriginal
 
 	// Create content
 	text := widget.NewLabel(updtmsg)
@@ -402,21 +520,35 @@ func showUpdateAlert(updtmsg string, releaseURL string, updateAvailable bool) {
 	})
 
 	content := container.NewVBox(
+		kbimg,
 		text,
 		myreleaselink,
+		myreleasenoteslink,
 		openBtn,
 	)
 
 	// Create or update window
 	if updateWindow == nil {
 		updateWindow = myApp.NewWindow(appName + ": Update Check")
-		updateWindow.SetIcon(theme.FolderIcon())
+		// Set icon based on month - Christmas Grinch in December, otherwise Trapper Red Plaid
+		if month == time.December {
+			updateWindow.SetIcon(resourceKrankyBearChristmasGrinchPng)
+		} else {
+			updateWindow.SetIcon(resourceKrankyBearTrapperRedPlaidPng)
+		}
 		updateWindow.Resize(fyne.NewSize(500, 300))
 		updateWindow.SetCloseIntercept(func() {
 			updateWindow.Close()
 			updateWindow = nil
 		})
 		registerChildWindow(updateWindow)
+	} else {
+		// Update icon if window already exists
+		if month == time.December {
+			updateWindow.SetIcon(resourceKrankyBearChristmasGrinchPng)
+		} else {
+			updateWindow.SetIcon(resourceKrankyBearTrapperRedPlaidPng)
+		}
 	}
 
 	updateWindow.SetContent(content)
@@ -928,16 +1060,134 @@ func createAppCard(app App, tabID string) fyne.CanvasObject {
 	return container.NewPadded(card)
 }
 
+// createColoredTabItem creates a TabItem with an optional colored icon indicator
+func createColoredTabItem(tab Tab, content fyne.CanvasObject) *container.TabItem {
+	if tab.Color == "" {
+		// No color specified, create regular tab
+		return container.NewTabItem(tab.Name, content)
+	}
+
+	// Parse hex color
+	tabColor, err := parseHexColor(tab.Color)
+	if err != nil {
+		fyne.LogError("Failed to parse tab color", err)
+		return container.NewTabItem(tab.Name, content)
+	}
+
+	// Create a colored icon resource
+	coloredIcon := createColoredIconResource(tabColor)
+	if coloredIcon == nil {
+		// If icon creation fails, fall back to regular tab
+		fyne.LogError("Failed to create colored icon, using regular tab", nil)
+		return container.NewTabItem(tab.Name, content)
+	}
+
+	return container.NewTabItemWithIcon(tab.Name, coloredIcon, content)
+}
+
+// parseHexColor parses a hex color string (e.g., "#FF0000" or "#FF0000FF")
+func parseHexColor(hex string) (color.Color, error) {
+	hex = strings.TrimPrefix(hex, "#")
+
+	var r, g, b, a uint8 = 0, 0, 0, 255
+
+	if len(hex) == 6 {
+		// RGB format
+		val, err := strconv.ParseUint(hex, 16, 32)
+		if err != nil {
+			return nil, err
+		}
+		r = uint8((val >> 16) & 0xFF)
+		g = uint8((val >> 8) & 0xFF)
+		b = uint8(val & 0xFF)
+	} else if len(hex) == 8 {
+		// RGBA format
+		val, err := strconv.ParseUint(hex, 16, 32)
+		if err != nil {
+			return nil, err
+		}
+		r = uint8((val >> 24) & 0xFF)
+		g = uint8((val >> 16) & 0xFF)
+		b = uint8((val >> 8) & 0xFF)
+		a = uint8(val & 0xFF)
+	} else {
+		return nil, fmt.Errorf("invalid hex color format: %s", hex)
+	}
+
+	return color.NRGBA{R: r, G: g, B: b, A: a}, nil
+}
+
+// colorToHex converts a color.Color to hex string format
+func colorToHex(c color.Color) string {
+	nrgba := color.NRGBAModel.Convert(c).(color.NRGBA)
+	return fmt.Sprintf("#%02X%02X%02X", nrgba.R, nrgba.G, nrgba.B)
+}
+
+// createColoredIconResource creates a simple colored icon resource
+func createColoredIconResource(c color.Color) fyne.Resource {
+	// Create a 16x16 colored PNG image
+	imgData := createColoredImage(c, 16, 16)
+	if imgData == nil || len(imgData) == 0 {
+		fyne.LogError("Failed to create colored image", nil)
+		return nil
+	}
+
+	// Generate a unique resource name from the color hex value
+	// Include .png extension so Fyne recognizes it as a PNG image
+	nrgba := color.NRGBAModel.Convert(c).(color.NRGBA)
+	resourceName := fmt.Sprintf("tab_color_%02X%02X%02X%02X.png", nrgba.R, nrgba.G, nrgba.B, nrgba.A)
+
+	return fyne.NewStaticResource(resourceName, imgData)
+}
+
+// createColoredImage creates PNG image data for a solid color
+func createColoredImage(c color.Color, width, height int) []byte {
+	// Convert color to NRGBA
+	nrgba := color.NRGBAModel.Convert(c).(color.NRGBA)
+
+	// Create a new NRGBA image
+	img := image.NewNRGBA(image.Rect(0, 0, width, height))
+
+	// Fill the image with the color
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetNRGBA(x, y, nrgba)
+		}
+	}
+
+	// Encode as PNG
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		fyne.LogError("Failed to encode PNG", err)
+		return nil
+	}
+
+	pngData := buf.Bytes()
+	if len(pngData) == 0 {
+		fyne.LogError("PNG encoding produced empty data", nil)
+		return nil
+	}
+
+	// Verify it's valid PNG by checking the signature
+	if len(pngData) < 8 || string(pngData[0:8]) != "\x89PNG\r\n\x1a\n" {
+		fyne.LogError("Invalid PNG signature", nil)
+		return nil
+	}
+
+	return pngData
+}
+
 func showCreateTabDialog() {
 	nameEntry := widget.NewEntry()
 	nameEntry.SetPlaceHolder("Enter tab name (e.g., Productivity)")
 	nameEntry.Wrapping = fyne.TextWrapOff
 
-	// Create a custom dialog with wider entry field (32 characters width)
-	formContent := container.NewVBox(
-		widget.NewLabel("Tab Name:"),
-		container.NewPadded(nameEntry),
-	)
+	// Color selection
+	var selectedColorHex string = ""
+	colorPreview := canvas.NewRectangle(color.Transparent)
+	colorPreview.SetMinSize(fyne.NewSize(40, 30))
+	colorPreview.StrokeColor = theme.ForegroundColor()
+	colorPreview.StrokeWidth = 1
 
 	// Check if dialog is already open
 	if existingWindow := showOrFocusDialog("Create New Tab"); existingWindow != nil {
@@ -946,8 +1196,36 @@ func showCreateTabDialog() {
 
 	// Create dialog window with custom size (wider for 32 characters)
 	dialogWindow := myApp.NewWindow("Create New Tab")
-	dialogWindow.Resize(fyne.NewSize(500, 150))
+	dialogWindow.Resize(fyne.NewSize(500, 200))
 	registerDialog(dialogWindow)
+
+	colorBtn := widget.NewButton("Choose Color", func() {
+		dialog.ShowColorPicker("Select Tab Color", "Choose a color for this tab", func(c color.Color) {
+			selectedColorHex = colorToHex(c)
+			colorPreview.FillColor = c
+			colorPreview.Refresh()
+		}, dialogWindow)
+	})
+
+	clearColorBtn := widget.NewButton("Clear", func() {
+		selectedColorHex = ""
+		colorPreview.FillColor = color.Transparent
+		colorPreview.Refresh()
+	})
+
+	colorRow := container.NewHBox(
+		widget.NewLabel("Tab Color:"),
+		colorPreview,
+		colorBtn,
+		clearColorBtn,
+	)
+
+	// Create a custom dialog with wider entry field (32 characters width)
+	formContent := container.NewVBox(
+		widget.NewLabel("Tab Name:"),
+		container.NewPadded(nameEntry),
+		colorRow,
+	)
 
 	createBtn := widget.NewButton("Create", func() {
 		name := strings.TrimSpace(nameEntry.Text)
@@ -970,6 +1248,7 @@ func showCreateTabDialog() {
 			ID:     newTabID,
 			Name:   name,
 			AppIDs: []string{},
+			Color:  selectedColorHex,
 		}
 
 		config.Tabs = append(config.Tabs, newTab)
@@ -985,11 +1264,31 @@ func showCreateTabDialog() {
 		if err := SaveConfig(config, configPath); err != nil {
 			dialog.ShowError(fmt.Errorf("Failed to save config: %v", err), dialogWindow)
 		} else {
+			// Explicitly remove from tracking before closing
+			title := dialogWindow.Title()
+			delete(openDialogs, title)
+			// Remove from child windows
+			for i, w := range childWindows {
+				if w == dialogWindow {
+					childWindows = append(childWindows[:i], childWindows[i+1:]...)
+					break
+				}
+			}
 			dialogWindow.Close()
 		}
 	})
 
 	cancelBtn := widget.NewButton("Cancel", func() {
+		// Explicitly remove from tracking before closing
+		title := dialogWindow.Title()
+		delete(openDialogs, title)
+		// Remove from child windows
+		for i, w := range childWindows {
+			if w == dialogWindow {
+				childWindows = append(childWindows[:i], childWindows[i+1:]...)
+				break
+			}
+		}
 		dialogWindow.Close()
 	})
 
@@ -1018,11 +1317,24 @@ func showEditTabDialog() {
 	nameEntry.SetText(tab.Name)
 	nameEntry.Wrapping = fyne.TextWrapOff
 
-	// Create a custom dialog with wider entry field (32 characters width)
-	formContent := container.NewVBox(
-		widget.NewLabel("Tab Name:"),
-		container.NewPadded(nameEntry),
-	)
+	// Color selection
+	var selectedColor color.Color = nil
+	var selectedColorHex string = tab.Color
+
+	// Parse existing color if present
+	if tab.Color != "" {
+		if c, err := parseHexColor(tab.Color); err == nil {
+			selectedColor = c
+		}
+	}
+
+	colorPreview := canvas.NewRectangle(color.Transparent)
+	if selectedColor != nil {
+		colorPreview.FillColor = selectedColor
+	}
+	colorPreview.SetMinSize(fyne.NewSize(40, 30))
+	colorPreview.StrokeColor = theme.ForegroundColor()
+	colorPreview.StrokeWidth = 1
 
 	// Check if dialog is already open
 	if existingWindow := showOrFocusDialog("Edit Tab"); existingWindow != nil {
@@ -1031,8 +1343,46 @@ func showEditTabDialog() {
 
 	// Create dialog window with custom size (wider for 32 characters)
 	dialogWindow := myApp.NewWindow("Edit Tab")
-	dialogWindow.Resize(fyne.NewSize(500, 150))
+	dialogWindow.Resize(fyne.NewSize(500, 200))
 	registerDialog(dialogWindow)
+
+	colorBtn := widget.NewButton("Choose Color", func() {
+		initialColor := selectedColor
+		if initialColor == nil {
+			initialColor = theme.PrimaryColor()
+		}
+		colorPicker := dialog.NewColorPicker("Select Tab Color", "Choose a color for this tab", func(c color.Color) {
+			selectedColor = c
+			selectedColorHex = colorToHex(c)
+			colorPreview.FillColor = c
+			colorPreview.Refresh()
+		}, dialogWindow)
+		if initialColor != nil {
+			colorPicker.SetColor(initialColor)
+		}
+		colorPicker.Show()
+	})
+
+	clearColorBtn := widget.NewButton("Clear", func() {
+		selectedColor = nil
+		selectedColorHex = ""
+		colorPreview.FillColor = color.Transparent
+		colorPreview.Refresh()
+	})
+
+	colorRow := container.NewHBox(
+		widget.NewLabel("Tab Color:"),
+		colorPreview,
+		colorBtn,
+		clearColorBtn,
+	)
+
+	// Create a custom dialog with wider entry field (32 characters width)
+	formContent := container.NewVBox(
+		widget.NewLabel("Tab Name:"),
+		container.NewPadded(nameEntry),
+		colorRow,
+	)
 
 	saveBtn := widget.NewButton("Save", func() {
 		newName := strings.TrimSpace(nameEntry.Text)
@@ -1041,10 +1391,11 @@ func showEditTabDialog() {
 			return
 		}
 
-		// Update tab name
+		// Update tab name and color
 		for i := range config.Tabs {
 			if config.Tabs[i].ID == currentTabID {
 				config.Tabs[i].Name = newName
+				config.Tabs[i].Color = selectedColorHex
 				break
 			}
 		}
@@ -1056,11 +1407,31 @@ func showEditTabDialog() {
 		if err := SaveConfig(config, configPath); err != nil {
 			dialog.ShowError(fmt.Errorf("Failed to save config: %v", err), dialogWindow)
 		} else {
+			// Explicitly remove from tracking before closing
+			title := dialogWindow.Title()
+			delete(openDialogs, title)
+			// Remove from child windows
+			for i, w := range childWindows {
+				if w == dialogWindow {
+					childWindows = append(childWindows[:i], childWindows[i+1:]...)
+					break
+				}
+			}
 			dialogWindow.Close()
 		}
 	})
 
 	cancelBtn := widget.NewButton("Cancel", func() {
+		// Explicitly remove from tracking before closing
+		title := dialogWindow.Title()
+		delete(openDialogs, title)
+		// Remove from child windows
+		for i, w := range childWindows {
+			if w == dialogWindow {
+				childWindows = append(childWindows[:i], childWindows[i+1:]...)
+				break
+			}
+		}
 		dialogWindow.Close()
 	})
 
@@ -1166,7 +1537,10 @@ func showDeleteCustomAppDialog(app App) {
 				if err := SaveConfig(config, configPath); err != nil {
 					dialog.ShowError(fmt.Errorf("Failed to save config: %v", err), mainWindow)
 				} else {
-					dialog.ShowInformation("Success", fmt.Sprintf("Deleted '%s'", app.Name), parentWindow)
+					// Refresh Manage Apps dialog if it's open to update the filter
+					refreshManageAppsDialog()
+					// Show success dialog that auto-closes after 5 seconds
+					showAutoCloseSuccessDialog(fmt.Sprintf("Deleted '%s'", app.Name), parentWindow)
 				}
 			}
 		}, parentWindow)
@@ -1199,10 +1573,10 @@ func showManageAppsDialog() {
 		},
 		func() fyne.CanvasObject {
 			return container.NewHBox(
-				widget.NewLabel(""),
 				widget.NewButton("Add to Tab", nil),
-				widget.NewButton("Remove from Current Tab", nil),
+				widget.NewButton("Remove from Tab", nil),
 				widget.NewButton("", nil), // Delete button for custom apps
+				widget.NewLabel(""),       // Application name on the right
 			)
 		},
 		func(id widget.ListItemID, obj fyne.CanvasObject) {
@@ -1211,10 +1585,10 @@ func showManageAppsDialog() {
 			}
 			app := filteredApps[id]
 			container := obj.(*fyne.Container)
-			label := container.Objects[0].(*widget.Label)
-			addBtn := container.Objects[1].(*widget.Button)
-			removeBtn := container.Objects[2].(*widget.Button)
-			deleteBtn := container.Objects[3].(*widget.Button)
+			addBtn := container.Objects[0].(*widget.Button)
+			removeBtn := container.Objects[1].(*widget.Button)
+			deleteBtn := container.Objects[2].(*widget.Button)
+			label := container.Objects[3].(*widget.Label)
 
 			labelText := app.Name
 			if app.IsCustom {
@@ -1226,35 +1600,43 @@ func showManageAppsDialog() {
 			addBtn.OnTapped = func() {
 				// If current tab is not "home", add directly to current tab
 				if currentTabID != "home" {
-					// Check if app is already in tab
-					tab := getTabByID(currentTabID)
-					if tab != nil {
-						alreadyAdded := false
-						for _, appID := range tab.AppIDs {
-							if appID == app.ID {
-								alreadyAdded = true
+					// Check if app is already in tab - check directly against config.Tabs
+					alreadyAdded := false
+					for i := range config.Tabs {
+						if config.Tabs[i].ID == currentTabID {
+							for _, appID := range config.Tabs[i].AppIDs {
+								// Only consider it already added if the ID matches AND the app actually exists
+								if appID == app.ID {
+									// Verify the app actually exists in config.Apps and matches this app
+									existingApp := getAppByID(appID)
+									if existingApp != nil && existingApp.ID == app.ID {
+										alreadyAdded = true
+										break
+									}
+									// If app doesn't exist or doesn't match, it's a stale ID - we can ignore it
+								}
+							}
+							break
+						}
+					}
+
+					if !alreadyAdded {
+						// Add app to current tab
+						for i := range config.Tabs {
+							if config.Tabs[i].ID == currentTabID {
+								config.Tabs[i].AppIDs = append(config.Tabs[i].AppIDs, app.ID)
+								// Refresh the grid (apps will be sorted alphabetically)
+								refreshGridWithSortedApps(currentTabID)
+
+								// Save config
+								if err := SaveConfig(config, configPath); err != nil {
+									dialog.ShowError(fmt.Errorf("Failed to save config: %v", err), mainWindow)
+								}
 								break
 							}
 						}
-
-						if !alreadyAdded {
-							// Add app to current tab
-							for i := range config.Tabs {
-								if config.Tabs[i].ID == currentTabID {
-									config.Tabs[i].AppIDs = append(config.Tabs[i].AppIDs, app.ID)
-									// Refresh the grid (apps will be sorted alphabetically)
-									refreshGridWithSortedApps(currentTabID)
-
-									// Save config
-									if err := SaveConfig(config, configPath); err != nil {
-										dialog.ShowError(fmt.Errorf("Failed to save config: %v", err), mainWindow)
-									}
-									break
-								}
-							}
-						} else {
-							dialog.ShowInformation("Already Added", fmt.Sprintf("'%s' is already in the current tab", app.Name), mainWindow)
-						}
+					} else {
+						dialog.ShowInformation("Already Added", fmt.Sprintf("'%s' is already in the current tab", app.Name), mainWindow)
 					}
 				} else {
 					// Current tab is "home", show dialog to select which tab
@@ -1263,7 +1645,7 @@ func showManageAppsDialog() {
 			}
 
 			// Remove from current tab button (works for all apps)
-			removeBtn.SetText("Remove from Current Tab")
+			removeBtn.SetText("Remove from Tab")
 			removeBtn.OnTapped = func() {
 				removeAppFromTab(app.ID, currentTabID)
 			}
@@ -1383,11 +1765,8 @@ func refreshManageAppsDialog() {
 			}
 			// Close the window
 			manageAppsWindow.Close()
-			// Small delay to ensure window is closed before reopening
-			go func() {
-				time.Sleep(100 * time.Millisecond)
-				showManageAppsDialog()
-			}()
+			// Reopen the dialog immediately (on the main thread, since we're called from a button handler)
+			showManageAppsDialog()
 		} else {
 			// Window is not visible, clean it up
 			delete(openDialogs, "Manage Applications")
@@ -1465,9 +1844,14 @@ func showCopyToTabDialog(app App, currentTabID string) {
 			// Check if app is already in this tab
 			alreadyAdded := false
 			for _, appID := range tab.AppIDs {
+				// Only consider it already added if the ID matches AND the app actually exists
 				if appID == app.ID {
-					alreadyAdded = true
-					break
+					// Verify the app actually exists in config.Apps
+					if getAppByID(appID) != nil {
+						alreadyAdded = true
+						break
+					}
+					// If app doesn't exist, it's a stale ID - we can ignore it
 				}
 			}
 
@@ -1527,12 +1911,17 @@ func showCopyToTabDialog(app App, currentTabID string) {
 			// Add app to selected tab
 			for i := range config.Tabs {
 				if config.Tabs[i].ID == selectedTabID {
-					// Check if app is already in tab
+					// Check if app is already in tab - verify app exists and matches
 					alreadyAdded := false
 					for _, existingID := range config.Tabs[i].AppIDs {
 						if existingID == app.ID {
-							alreadyAdded = true
-							break
+							// Verify the app actually exists in config.Apps and matches this app
+							existingApp := getAppByID(existingID)
+							if existingApp != nil && existingApp.ID == app.ID {
+								alreadyAdded = true
+								break
+							}
+							// If app doesn't exist or doesn't match, it's a stale ID - we can ignore it
 						}
 					}
 
@@ -1604,9 +1993,14 @@ func showAddAppToTabDialog(app App) {
 			// Check if app is already in this tab
 			alreadyAdded := false
 			for _, appID := range tab.AppIDs {
+				// Only consider it already added if the ID matches AND the app actually exists
 				if appID == app.ID {
-					alreadyAdded = true
-					break
+					// Verify the app actually exists in config.Apps
+					if getAppByID(appID) != nil {
+						alreadyAdded = true
+						break
+					}
+					// If app doesn't exist, it's a stale ID - we can ignore it
 				}
 			}
 			check.SetChecked(alreadyAdded)
@@ -1626,12 +2020,17 @@ func showAddAppToTabDialog(app App) {
 			// Add app to selected tab
 			for i := range config.Tabs {
 				if config.Tabs[i].ID == selectedTabID {
-					// Check if app is already in tab
+					// Check if app is already in tab - verify app exists and matches
 					alreadyAdded := false
 					for _, existingID := range config.Tabs[i].AppIDs {
 						if existingID == app.ID {
-							alreadyAdded = true
-							break
+							// Verify the app actually exists in config.Apps and matches this app
+							existingApp := getAppByID(existingID)
+							if existingApp != nil && existingApp.ID == app.ID {
+								alreadyAdded = true
+								break
+							}
+							// If app doesn't exist or doesn't match, it's a stale ID - we can ignore it
 						}
 					}
 
@@ -1766,18 +2165,63 @@ func showAddCustomAppDialog() {
 
 		config.Apps = append(config.Apps, customApp)
 
+		// Add custom app to Home tab if not already there
+		homeTab := getTabByID("home")
+		if homeTab != nil {
+			// Check if app is already in home tab
+			alreadyInHome := false
+			for _, appID := range homeTab.AppIDs {
+				if appID == customApp.ID {
+					alreadyInHome = true
+					break
+				}
+			}
+			if !alreadyInHome {
+				// Add to home tab
+				for i := range config.Tabs {
+					if config.Tabs[i].ID == "home" {
+						config.Tabs[i].AppIDs = append(config.Tabs[i].AppIDs, customApp.ID)
+						// Refresh the home tab grid
+						refreshGridWithSortedApps("home")
+						break
+					}
+				}
+			}
+		}
+
 		// Save config
 		if err := SaveConfig(config, configPath); err != nil {
 			dialog.ShowError(fmt.Errorf("Failed to save config: %v", err), dialogWindow)
 		} else {
+			// Explicitly remove from tracking before closing
+			title := dialogWindow.Title()
+			delete(openDialogs, title)
+			// Remove from child windows
+			for i, w := range childWindows {
+				if w == dialogWindow {
+					childWindows = append(childWindows[:i], childWindows[i+1:]...)
+					break
+				}
+			}
 			dialogWindow.Close()
 			// Refresh Manage Apps dialog if it's open
 			refreshManageAppsDialog()
-			dialog.ShowInformation("Success", fmt.Sprintf("Added '%s' to applications", name), mainWindow)
+			// Show success dialog that auto-closes after 5 seconds
+			showAutoCloseSuccessDialog(fmt.Sprintf("Added '%s' to applications", name), mainWindow)
 		}
 	})
 
 	cancelBtn := widget.NewButton("Cancel", func() {
+		// Explicitly remove from tracking before closing
+		title := dialogWindow.Title()
+		delete(openDialogs, title)
+		// Remove from child windows
+		for i, w := range childWindows {
+			if w == dialogWindow {
+				childWindows = append(childWindows[:i], childWindows[i+1:]...)
+				break
+			}
+		}
 		dialogWindow.Close()
 	})
 
@@ -2030,6 +2474,38 @@ func showChangeIconDialog(app App, tabID string) {
 	centerDialogOnMainWindow(dialogWindow)
 }
 
+// showAutoCloseSuccessDialog shows a success dialog that automatically closes after 5 seconds
+func showAutoCloseSuccessDialog(message string, parent fyne.Window) {
+	successWindow := myApp.NewWindow("Success")
+	successWindow.Resize(fyne.NewSize(400, 150))
+
+	label := widget.NewLabel(message)
+	label.Alignment = fyne.TextAlignCenter
+	label.Wrapping = fyne.TextWrapWord
+
+	okBtn := widget.NewButton("OK", func() {
+		successWindow.Close()
+	})
+
+	content := container.NewVBox(
+		label,
+		container.NewCenter(okBtn),
+	)
+
+	successWindow.SetContent(content)
+	// Use centerDialogOnMainWindow to ensure it appears on the same display as the main window
+	centerDialogOnMainWindow(successWindow)
+
+	// Auto-close after 5 seconds
+	go func() {
+		time.Sleep(5 * time.Second)
+		// Check if window is still open before closing
+		if successWindow.Content() != nil && successWindow.Content().Visible() {
+			successWindow.Close()
+		}
+	}()
+}
+
 func showAppDetailsDialog(app App) {
 	details := fmt.Sprintf("Application Details\n\n")
 	details += fmt.Sprintf("Name: %s\n", app.Name)
@@ -2046,6 +2522,207 @@ func showAppDetailsDialog(app App) {
 	details += fmt.Sprintf("Type: %s\n", map[bool]string{true: "Custom", false: "Discovered"}[app.IsCustom])
 
 	dialog.ShowInformation("Application Details", details, mainWindow)
+}
+
+func showHelpDialog() {
+	// Check if help window is already open using the dialog tracking system
+	if existingWindow := showOrFocusDialog(appName + ": Help"); existingWindow != nil {
+		// Update helpWindow reference in case it was cleaned up
+		helpWindow = existingWindow
+		return
+	}
+
+	helpWindow = myApp.NewWindow(appName + ": Help")
+
+	// Set icon based on month - Christmas Grinch in December, otherwise Trapper Red Plaid
+	_, month, _ := time.Now().Date()
+	if month == time.December {
+		helpWindow.SetIcon(resourceKrankyBearChristmasGrinchPng)
+	} else {
+		helpWindow.SetIcon(resourceKrankyBearTrapperRedPlaidPng)
+	}
+
+	hlpText := `KrankyBear LaunchPad is a cross-platform application launcher similar to macOS LaunchPad.
+
+FEATURES:
+
+- Cross-platform support: Works on macOS, Linux, and Windows
+- Automatic application discovery from package managers:
+  • macOS: Homebrew (Casks)
+  • Windows: Chocolatey, Winget, Scoop
+  • Linux: APT, RPM/YUM/DNF, Zypper, Snap
+- Tab organization: Create custom tabs to organize applications
+  • Create, edit, delete, and sort tabs
+  • Home tab automatically includes all discovered apps
+  • Tab selection is remembered between sessions
+- Custom applications: Add manually installed applications with custom icons
+- Theme support: Light and dark themes with preference persistence
+- System tray integration: Run in background with system tray menu
+- Update checker: Check for updates from GitHub releases
+- Window state memory: Remembers window size and selected tab between sessions
+- App management:
+  • Add apps to multiple tabs
+  • Edit app properties (name, executable, icon)
+  • Remove apps from tabs
+  • Filter and search applications
+
+USAGE:
+
+- Click on any app icon to launch the application
+- Use "Manage Apps" to add, edit, or remove applications
+- Create new tabs using "+ New Tab" button
+- Use "Edit Tab" to rename tabs or manage apps within tabs
+- Use "Sort Tabs" to reorder tabs (Home tab cannot be moved)
+- Theme can be changed in Settings > Theme Settings
+- Check for updates in Help > Check for Update
+
+CONFIGURATION:
+
+Configuration is stored in ~/.krankybear-launchpad/config.json and includes:
+- List of discovered and custom applications
+- Tab definitions and app assignments
+- Preferences (theme, window size, selected tab) are stored separately
+
+Default settings will be created on first run if they don't exist.
+`
+
+	hlpText += "\n" + appName + " v " + appVersion
+	hlpText += "\n" + appCopyright
+	hlpText += "\n\n" + appAuthor + ", using Go and fyne GUI"
+
+	plnText := `PLANNED UPDATES:
+
+- Window position saving/restoration (currently limited by Fyne framework)
+- Additional package manager support
+- App icon auto-detection improvements
+- Keyboard shortcuts for common operations
+- Drag and drop app organization
+- Export/import configuration
+- App categories/tags
+- Recent apps tracking
+- Favorites/starred apps
+`
+
+	bugText := `KNOWN ISSUES:
+
+- Window position cannot be saved/restored (Fyne framework limitation)
+  • Window always opens centered on screen
+  • Window size is remembered correctly
+- Some discovered apps may not have icons detected automatically
+  • Custom icons can be added manually via "Manage Apps"
+- On some Linux distributions, app discovery may be slower
+- System tray menu may not be available on all platforms
+`
+
+	settingsText := `SETTINGS INFORMATION:
+
+Preferences are stored automatically and include:
+
+- Theme preference (light/dark/default)
+- Window size (width and height)
+- Selected tab ID
+- Application configuration (stored in config.json)
+
+THEME SETTINGS:
+- Light Theme: Light background with dark text
+- Dark Theme: Dark background with light text
+- Default Theme: Uses system theme
+
+WINDOW SETTINGS:
+- Window size is automatically saved when the window is closed
+- Window position cannot be saved (Fyne framework limitation)
+- Selected tab is saved when you switch tabs
+
+APPLICATION CONFIGURATION:
+- Stored in ~/.krankybear-launchpad/config.json
+- Contains all tabs, apps, and their relationships
+- Can be manually edited if needed (backup recommended)
+- Default configuration created on first run
+`
+
+	licText := `KrankyBear LaunchPad is FREE Software as defined in the license agreement below.
+
+This application is "FREE Software".
+
+This application is intended for any use by any individual, in any organization.
+
+This application provides no guarantees as to stability of operations or suitability 
+for any purpose, but every attempt has been made to make this application reliable.
+
+This application may not be sold, no money may be asked by anyone for provision of, or any services related to this application.
+
+Using this application (and reading this text) is considered acceptance of
+the terms of the License Agreement, and acknowledgement that this is FREE
+Software and the additional terms above.
+
+See https://github.com/amarillier/KrankyBearLaunchPad/
+`
+
+	licenseLink, err := url.Parse("https://github.com/amarillier/KrankyBearLaunchPad/blob/main/LICENSE")
+	if err != nil {
+		fyne.LogError("Could not parse URL", err)
+	}
+	hyperlink := widget.NewHyperlink("https://github.com/amarillier/KrankyBearLaunchPad/blob/main/LICENSE", licenseLink)
+	hyperlink.Alignment = fyne.TextAlignLeading
+
+	helpLabel := widget.NewLabel(hlpText)
+	helpLabel.Wrapping = fyne.TextWrapWord
+
+	plannedLabel := widget.NewLabel(plnText)
+	plannedLabel.Wrapping = fyne.TextWrapWord
+
+	bugsLabel := widget.NewLabel(bugText)
+	bugsLabel.Wrapping = fyne.TextWrapWord
+
+	settingsLabel := widget.NewLabel(settingsText)
+	settingsLabel.Wrapping = fyne.TextWrapWord
+
+	licLabel := widget.NewLabel(licText)
+	licLabel.Wrapping = fyne.TextWrapWord
+
+	tabs := container.NewDocTabs(
+		container.NewTabItem("Help", container.NewScroll(helpLabel)),
+		container.NewTabItem("Known Issues", container.NewScroll(bugsLabel)),
+		container.NewTabItem("Planned Updates", container.NewScroll(plannedLabel)),
+		container.NewTabItem("Settings Info", container.NewScroll(settingsLabel)),
+		container.NewTabItem("License", container.NewVBox(
+			container.NewScroll(licLabel),
+			hyperlink,
+		)),
+	)
+	tabs.SetTabLocation(container.TabLocationTop)
+
+	helpWindow.Resize(fyne.NewSize(800, 500))
+	helpWindow.SetContent(tabs)
+	registerDialog(helpWindow)
+
+	// Set up close intercept to also clear helpWindow variable
+	// This needs to be after registerDialog because it will override the one set up by registerChildWindow
+	helpWindow.SetCloseIntercept(func() {
+		// Store reference to window before cleanup
+		windowToClose := helpWindow
+		// Get title before cleanup
+		title := windowToClose.Title()
+
+		// Remove from tracking list
+		for i, w := range childWindows {
+			if w == windowToClose {
+				childWindows = append(childWindows[:i], childWindows[i+1:]...)
+				break
+			}
+		}
+		// Remove from open dialogs map
+		if _, exists := openDialogs[title]; exists {
+			delete(openDialogs, title)
+		}
+		// Clear helpWindow variable
+		helpWindow = nil
+		// Close the window
+		windowToClose.Close()
+	})
+
+	centerDialogOnMainWindow(helpWindow)
+	helpWindow.Show()
 }
 
 func showAboutDialog() {
@@ -2498,12 +3175,12 @@ func refreshTabsUI() {
 	tabItems := []*container.TabItem{}
 	for _, t := range config.Tabs {
 		if g, ok := appGrids[t.ID]; ok {
-			tabItems = append(tabItems, container.NewTabItem(t.Name, g))
+			tabItems = append(tabItems, createColoredTabItem(t, g))
 		} else {
 			// Create grid if it doesn't exist
 			grid := createAppGrid(t.ID)
 			appGrids[t.ID] = grid
-			tabItems = append(tabItems, container.NewTabItem(t.Name, grid))
+			tabItems = append(tabItems, createColoredTabItem(t, grid))
 		}
 	}
 
@@ -2520,6 +3197,8 @@ func refreshTabsUI() {
 		for _, t := range config.Tabs {
 			if t.Name == tab.Text {
 				currentTabID = t.ID
+				// Save selected tab to preferences
+				myApp.Preferences().SetString("currentTabID", currentTabID)
 				break
 			}
 		}
