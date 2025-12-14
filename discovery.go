@@ -37,69 +37,74 @@ func discoverMacOSApps() ([]App, error) {
 	}
 
 	for _, appDir := range appDirs {
-		entries, err := os.ReadDir(appDir)
-		if err != nil {
-			continue // Skip if directory doesn't exist
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() && strings.HasSuffix(entry.Name(), ".app") {
-				appPath := filepath.Join(appDir, entry.Name())
-				appName := strings.TrimSuffix(entry.Name(), ".app")
-
-				// Try to get the actual app name from Info.plist
-				infoPlist := filepath.Join(appPath, "Contents", "Info.plist")
-				if data, err := os.ReadFile(infoPlist); err == nil {
-					// Simple extraction of CFBundleName or CFBundleDisplayName
-					content := string(data)
-					if name := extractPlistValue(content, "CFBundleDisplayName"); name != "" {
-						appName = name
-					} else if name := extractPlistValue(content, "CFBundleName"); name != "" {
-						appName = name
-					}
-				}
-
-				// Find executable
-				executable := filepath.Join(appPath, "Contents", "MacOS", appName)
-				if _, err := os.Stat(executable); err != nil {
-					// Try to find any executable in MacOS directory
-					macOSDir := filepath.Join(appPath, "Contents", "MacOS")
-					if entries, err := os.ReadDir(macOSDir); err == nil && len(entries) > 0 {
-						executable = filepath.Join(macOSDir, entries[0].Name())
-					} else {
-						executable = appPath // Fallback to .app bundle (use open command)
-					}
-				}
-
-				// Skip if already seen
-				if seenApps[executable] {
-					continue
-				}
-				seenApps[executable] = true
-
-				// Find icon
-				iconPath := ""
-				resourcesDir := filepath.Join(appPath, "Contents", "Resources")
-				// Look for .icns file
-				if entries, err := os.ReadDir(resourcesDir); err == nil {
-					for _, resEntry := range entries {
-						if strings.HasSuffix(strings.ToLower(resEntry.Name()), ".icns") {
-							iconPath = filepath.Join(resourcesDir, resEntry.Name())
-							break
-						}
-					}
-				}
-
-				apps = append(apps, App{
-					ID:         fmt.Sprintf("macos_%d", appIDCounter),
-					Name:       appName,
-					Executable: executable,
-					Icon:       iconPath,
-					IsCustom:   false,
-				})
-				appIDCounter++
+		// Use WalkDir to search recursively for .app bundles
+		filepath.WalkDir(appDir, func(appPath string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil // Skip directories we can't read
 			}
-		}
+
+			// Only process .app directories
+			if !d.IsDir() || !strings.HasSuffix(d.Name(), ".app") {
+				return nil
+			}
+
+			appName := strings.TrimSuffix(d.Name(), ".app")
+
+			// Try to get the actual app name from Info.plist
+			infoPlist := filepath.Join(appPath, "Contents", "Info.plist")
+			if data, err := os.ReadFile(infoPlist); err == nil {
+				// Simple extraction of CFBundleName or CFBundleDisplayName
+				content := string(data)
+				if name := extractPlistValue(content, "CFBundleDisplayName"); name != "" {
+					appName = name
+				} else if name := extractPlistValue(content, "CFBundleName"); name != "" {
+					appName = name
+				}
+			}
+
+			// Find executable
+			executable := filepath.Join(appPath, "Contents", "MacOS", appName)
+			if _, err := os.Stat(executable); err != nil {
+				// Try to find any executable in MacOS directory
+				macOSDir := filepath.Join(appPath, "Contents", "MacOS")
+				if entries, err := os.ReadDir(macOSDir); err == nil && len(entries) > 0 {
+					executable = filepath.Join(macOSDir, entries[0].Name())
+				} else {
+					executable = appPath // Fallback to .app bundle (use open command)
+				}
+			}
+
+			// Skip if already seen
+			if seenApps[executable] {
+				return filepath.SkipDir // Skip contents of this .app
+			}
+			seenApps[executable] = true
+
+			// Find icon
+			iconPath := ""
+			resourcesDir := filepath.Join(appPath, "Contents", "Resources")
+			// Look for .icns file
+			if entries, err := os.ReadDir(resourcesDir); err == nil {
+				for _, resEntry := range entries {
+					if strings.HasSuffix(strings.ToLower(resEntry.Name()), ".icns") {
+						iconPath = filepath.Join(resourcesDir, resEntry.Name())
+						break
+					}
+				}
+			}
+
+			apps = append(apps, App{
+				ID:         fmt.Sprintf("macos_%d", appIDCounter),
+				Name:       appName,
+				Executable: executable,
+				Icon:       iconPath,
+				IsCustom:   false,
+			})
+			appIDCounter++
+
+			// Skip walking into the .app bundle's contents
+			return filepath.SkipDir
+		})
 	}
 
 	// Discover Homebrew applications

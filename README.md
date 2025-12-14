@@ -1,6 +1,8 @@
 # KrankyBear LaunchPad
 
-A cross-platform application launcher similar to macOS LaunchPad, built with Go and Fyne GUI.
+A cross-platform application launcher similar to macOS LaunchPad, built with Go and Fyne GUI. Why a new application just like MacOS Launchpad? Because with MacOS 26, Launchpad as we knew it is not the same. It is simply named Apps, looks, and behaves quite differently. If you like that, if you like using Spotlight - great, nothing wrong with them. But Launchpad was convenient and allowed customization. This is similar, but not the same, and allows you to use an identical application across all of Windows, Linux and MacOS.
+
+Design philosophy aligns with Fyne (GUI package I use), ease of use, functionality and bug fixes, performance. Some areas are a little slow, acknowledged and attempts to make it all faster are continuous
 
 ## Features
 
@@ -15,15 +17,23 @@ A cross-platform application launcher similar to macOS LaunchPad, built with Go 
   - Home tab automatically includes all discovered apps
   - Tab selection is remembered between sessions
 - **Custom Apps**: Add manually installed applications with custom icons
-- **Theme Support**: Light and dark themes with preference persistence
+- **Theme Support**: System (follows OS), Light, and Dark themes with preference persistence
 - **System Tray Integration**: Run in background with system tray menu
 - **Update Checker**: Check for updates from GitHub releases
 - **Window State Memory**: Remembers window size and selected tab between sessions
+- **Performance Optimizations**: 
+  - Icon caching at display size (64x64) for fast loading
+  - Progressive icon loading for responsive startup
+  - Background app discovery doesn't block UI
 - **App Management**: 
   - Add apps to multiple tabs
   - Edit app properties (name, executable, icon)
   - Remove apps from tabs
-  - Filter and search applications
+  - Filter and search applications with clear button
+  - Search for icons online via Google Images
+- **View Modes**: Toggle between grid/icon view and compact list view
+- **Multi-Monitor Support**: Window opens on the display where your cursor is located
+- **Right-Click Context**: Right-click on empty tab space to quickly edit tab settings
 
 ## Quick Start
 
@@ -33,6 +43,7 @@ Before building for the first time, prepare all dependencies:
 
 **macOS/Linux:**
 ```bash
+
 ./prepare-deps.sh
 ```
 

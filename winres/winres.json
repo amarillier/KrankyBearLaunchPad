@@ -35,22 +35,22 @@
     "#1": {
       "0000": {
         "fixed": {
-          "file_version": "0.1.2",
-          "product_version": "0.1.2"
+          "file_version": "0.1.3",
+          "product_version": "0.1.3"
         },
         "info": {
           "0409": {
             "Comments": "",
             "CompanyName": "Allan Marillier",
             "FileDescription": "KrankyBearLaunchPad",
-            "FileVersion": "0.1.2",
+            "FileVersion": "0.1.3",
             "InternalName": "",
             "LegalCopyright": "Allan Marillier, 2025-",
             "LegalTrademarks": "",
             "OriginalFilename": "",
             "PrivateBuild": "",
             "ProductName": "KrankyBearLaunchPad",
-            "ProductVersion": "0.1.2",
+            "ProductVersion": "0.1.3",
             "SpecialBuild": ""
           }
         }

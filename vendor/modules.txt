@@ -1,4 +1,4 @@
-# fyne.io/fyne/v2 v2.7.0
+# fyne.io/fyne/v2 v2.7.1
 ## explicit; go 1.19
 fyne.io/fyne/v2
 fyne.io/fyne/v2/app
@@ -127,6 +127,9 @@ github.com/hack-pad/go-indexeddb/idb/internal/jscache
 github.com/hack-pad/safejs
 github.com/hack-pad/safejs/internal/catch
 github.com/hack-pad/safejs/internal/stackerr
+# github.com/jackmordaunt/icns/v3 v3.0.1
+## explicit; go 1.21.5
+github.com/jackmordaunt/icns/v3
 # github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade
 ## explicit; go 1.18
 github.com/jeandeaual/go-locale

@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "KrankyBearLaunchPad"
-#define MyAppVersion "0.1.2"
+#define MyAppVersion "0.1.3"
 #define MyAppPublisher "Allan Marillier, 2025-"
 #define MyAppURL "https://github.com/amarillier/KrankyBearLaunchPad"
 #define MyAppExeName "launchpad-windows.exe"

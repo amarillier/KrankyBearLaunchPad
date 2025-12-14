@@ -29,6 +29,8 @@ bin/.DS_Store
 Resources/.DS_Store
 dist/
 build/
+launchpad
+launchpad-macos-arm64
 KrankyBearLaunchPad.app/
 vendor/*
 sync*.sh
